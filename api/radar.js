@@ -214,7 +214,7 @@ module.exports = async function handler(req, res) {
       ? 'Radar forma recente: giocatori che hanno segnato o fornito assist nelle ultime partite delle due squadre. Indici comparativi, non probabilità calibrate. ' + diagnostics.join(' | ')
       : 'Nessun giocatore con gol o assist rilevato nelle ultime partite disponibili. RadarBomber non usa nomi o statistiche di stagioni passate come se fossero attuali. ' +
         (diagnostics.length ? 'Dettagli: ' + diagnostics.join(' | ') : 'Riprova più tardi.');
-    res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=60');
+    res.setHeader('Cache-Control', 's-maxage=21600, stale-while-revalidate=86400');
     res.status(200).json({
       message,
       diagnostics,
