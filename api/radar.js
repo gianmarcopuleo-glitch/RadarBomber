@@ -139,6 +139,7 @@ const ODDS_SPORT_BY_LEAGUE = {
   'uefa europa league':'soccer_uefa_europa_league'
 };
 const oddsCache = new Map();
+const providerCache = new Map();
 const h2hCache = new Map();
 const h2hPlayerCache = new Map();
 const historicalLeagueCache = new Map();
@@ -227,6 +228,13 @@ async function pitch(path) {
   }
   return json.data ?? {};
 }
+async function pitchCached(path, ttlMs=10*60*1000) {
+  const cached=providerCache.get(path);
+  if(cached && Date.now()-cached.at<ttlMs) return cached.data;
+  const data=await pitch(path);
+  providerCache.set(path,{at:Date.now(),data});
+  return data;
+}
 const dateOnly = d => d.toISOString().slice(0, 10);
 const seasonBefore = (season, offset) => {
   const s=String(season||'');
@@ -251,7 +259,11 @@ async function cachedMatchPlayers(matchId) {
   return list;
 }
 async function historicalMatchesForLeague(leagueId, season) {
-  if(!leagueId || !season) return [];
+  if(!leagueId) return [];
+  if(!season) {
+    try { const meta=await pitchCached('/leagues/'+encodeURIComponent(leagueId),6*60*60*1000); season=meta.season||''; } catch {}
+  }
+  if(!season) return [];
   const seasons=[1,2,3].map(offset=>seasonBefore(season,offset)).filter(Boolean);
   const key=String(leagueId)+':'+seasons.join(',');
   const cached=historicalLeagueCache.get(key);
@@ -410,14 +422,14 @@ module.exports = async function handler(req, res) {
     // Costruiamo un quadro multi-fattoriale: rendimento individuale, volume/qualità
     // dei tiri, forza offensiva della squadra, vulnerabilità difensiva avversaria,
     // minuti e contesto casa/trasferta. I punteggi sono indici comparativi, non probabilità.
-    const leagueData = await pitch('/leagues');
+    const leagueData = await pitchCached('/leagues',6*60*60*1000);
     const leagues = (leagueData.leagues || []).filter(l => allowed(l.name) && l.id);
     const leagueResults = await Promise.all(leagues.map(async league => {
       try {
-        const current = await pitch('/leagues/' + encodeURIComponent(league.id));
+        const current = await pitchCached('/leagues/' + encodeURIComponent(league.id),6*60*60*1000);
         const currentSeason = current.season;
         if (!currentSeason) return [];
-        const data = await pitch('/leagues/' + encodeURIComponent(league.id) + '/matches?season=' + encodeURIComponent(currentSeason) + '&status=all');
+        const data = await pitchCached('/leagues/' + encodeURIComponent(league.id) + '/matches?season=' + encodeURIComponent(currentSeason) + '&status=all',20*60*1000);
         return (data.matches || []).map(m => ({...m, leagueName:(data.league && data.league.name)||league.name, _season:currentSeason}));
       } catch { return []; }
     }));
@@ -500,8 +512,8 @@ module.exports = async function handler(req, res) {
     const uniqueMatches = [...new Map([...homeRecent,...awayRecent].map(m=>[m.id,m])).values()];
     const playerResults = await Promise.all(uniqueMatches.map(async m => {
       const [playerResponse, shotResponse] = await Promise.all([
-        pitch('/matches/' + encodeURIComponent(m.id) + '/players').then(players => ({players:Array.isArray(players)?players:[]})).catch(error => ({players:[],error:error.message})),
-        pitch('/matches/' + encodeURIComponent(m.id) + '/shots').then(shots => ({shots:Array.isArray(shots.periods)?shots.periods.flatMap(period=>Array.isArray(period.shots)?period.shots:[]):[]})).catch(error => ({shots:[],shotError:error.message}))
+        pitchCached('/matches/' + encodeURIComponent(m.id) + '/players',24*60*60*1000).then(players => ({players:Array.isArray(players)?players:[]})).catch(error => ({players:[],error:error.message})),
+        pitchCached('/matches/' + encodeURIComponent(m.id) + '/shots',24*60*60*1000).then(shots => ({shots:Array.isArray(shots.periods)?shots.periods.flatMap(period=>Array.isArray(period.shots)?period.shots:[]):[]})).catch(error => ({shots:[],shotError:error.message}))
       ]);
       return {match:m,players:playerResponse.players,error:playerResponse.error,shots:shotResponse.shots,shotError:shotResponse.shotError};
     }));
