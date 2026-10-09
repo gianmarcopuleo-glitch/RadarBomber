@@ -11,7 +11,7 @@ const MAIN_TEAMS = new Set([
   'paris saint germain','psg','marseille','monaco','lyon','lille','nice',
   'benfica','porto','sporting cp','ajax','psv','feyenoord'
 ]);
-const normalizeTeam = value => String(value || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\\s+/g, ' ').trim();
+const normalizeTeam = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
 
 async function api(path) {
   const key = (process.env.API_FOOTBALL_KEY || '').trim();
