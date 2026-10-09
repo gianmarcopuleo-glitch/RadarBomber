@@ -246,7 +246,7 @@ const seasonBefore = (season, offset) => {
 async function cachedH2H(fixtureId) {
   const cached=h2hCache.get(fixtureId);
   if(cached && Date.now()-cached.at<6*60*60*1000) return cached.data;
-  const data=await pitch('/matches/'+encodeURIComponent(fixtureId)+'/h2h');
+  const data=await pitchCached('/matches/'+encodeURIComponent(fixtureId)+'/h2h',6*60*60*1000);
   h2hCache.set(fixtureId,{at:Date.now(),data});
   return data;
 }
@@ -270,7 +270,7 @@ async function historicalMatchesForLeague(leagueId, season) {
   if(cached && Date.now()-cached.at<12*60*60*1000) return cached.matches;
   const results=await Promise.all(seasons.map(async s=>{
     try {
-      const data=await pitch('/leagues/'+encodeURIComponent(leagueId)+'/matches?season='+encodeURIComponent(s)+'&status=all');
+      const data=await pitchCached('/leagues/'+encodeURIComponent(leagueId)+'/matches?season='+encodeURIComponent(s)+'&status=all',12*60*60*1000);
       return (data.matches||[]).map(m=>({...m,leagueName:data.league&&data.league.name||'',_season:s}));
     } catch { return []; }
   }));
@@ -311,7 +311,7 @@ module.exports = async function handler(req, res) {
       const matches = Array.isArray(result.matches) ? result.matches : [];
       // Convalidiamo le competizioni con il catalogo ufficiale: il solo nome
       // non basta e può includere campionati omonimi o non pertinenti.
-      const leagueCatalog = await pitch('/leagues');
+      const leagueCatalog = await pitchCached('/leagues',6*60*60*1000);
       const catalogLeagues = Array.isArray(leagueCatalog.leagues) ? leagueCatalog.leagues : [];
       const catalogById = new Map(catalogLeagues.filter(l=>l.id!=null).map(l=>[String(l.id),l]));
       const supportedLeagueIds = new Set(
