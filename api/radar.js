@@ -97,12 +97,37 @@ module.exports = async function handler(req, res) {
     }
     const fixtureDate = String(fixture.fixture.date || date);
     const season = Number(fixtureDate.slice(0, 4)) - (Number(fixtureDate.slice(5, 7)) < 7 ? 1 : 0);
-    const [lineups, homePlayers, awayPlayers, injuries] = await Promise.all([
-      api('/fixtures/lineups?fixture=' + fixtureId),
-      api('/players?team=' + fixture.teams.home.id + '&season=' + season + '&league=' + fixture.league.id + '&page=1'),
-      api('/players?team=' + fixture.teams.away.id + '&season=' + season + '&league=' + fixture.league.id + '&page=1'),
-      api('/injuries?fixture=' + fixtureId)
+    // Treat lineups and injuries as optional: a restricted endpoint must not cancel player analysis.
+    const optional = async path => {
+      try { return { data: await api(path), error: '' }; }
+      catch (e) { return { data: [], error: e.message || 'Errore provider' }; }
+    };
+    const [lineupResult, homeResult, awayResult, injuryResult] = await Promise.all([
+      optional('/fixtures/lineups?fixture=' + fixtureId),
+      optional('/players?team=' + fixture.teams.home.id + '&season=' + season + '&league=' + fixture.league.id + '&page=1'),
+      optional('/players?team=' + fixture.teams.away.id + '&season=' + season + '&league=' + fixture.league.id + '&page=1'),
+      optional('/injuries?fixture=' + fixtureId)
     ]);
+    let lineups = lineupResult.data;
+    let homePlayers = homeResult.data;
+    let awayPlayers = awayResult.data;
+    const diagnostics = [];
+    if (homeResult.error) diagnostics.push('Statistiche ' + fixture.teams.home.name + ': ' + homeResult.error);
+    if (awayResult.error) diagnostics.push('Statistiche ' + fixture.teams.away.name + ': ' + awayResult.error);
+    if (lineupResult.error) diagnostics.push('Formazioni non disponibili: ' + lineupResult.error);
+    if (injuryResult.error) diagnostics.push('Infortuni non disponibili: ' + injuryResult.error);
+    // If a team+league query returns no rows, retry once using team+season only.
+    if (!homePlayers.length && !homeResult.error) {
+      const fallback = await optional('/players?team=' + fixture.teams.home.id + '&season=' + season + '&page=1');
+      homePlayers = fallback.data;
+      if (fallback.error) diagnostics.push('Recupero rosa ' + fixture.teams.home.name + ': ' + fallback.error);
+    }
+    if (!awayPlayers.length && !awayResult.error) {
+      const fallback = await optional('/players?team=' + fixture.teams.away.id + '&season=' + season + '&page=1');
+      awayPlayers = fallback.data;
+      if (fallback.error) diagnostics.push('Recupero rosa ' + fixture.teams.away.name + ': ' + fallback.error);
+    }
+    const injuries = injuryResult.data;
     const lineupKnown = lineups.length > 0;
     const starters = new Set(lineups.flatMap(t => (t.startXI || []).map(p => String(p.player && p.player.id))));
     const injured = new Set(injuries.map(i => String(i.player && i.player.id)));
@@ -120,7 +145,7 @@ module.exports = async function handler(req, res) {
         const assists = num(st.goals && st.goals.assists);
         const minutes = num(st.games && st.games.minutes);
         const apps = num(st.games && st.games.appearences);
-        if (!p.name || minutes < 90 || (lineupKnown && !starters.has(id)) || injured.has(id)) continue;
+        if (!p.name || minutes < 90 || (lineupKnown && starters.size > 0 && !starters.has(id)) || injured.has(id)) continue;
         players.push({
           name: p.name, team: group.team, position: st.games && st.games.position || '',
           goals, assists, minutes, starter: starters.has(id), lineupKnown,
@@ -131,10 +156,16 @@ module.exports = async function handler(req, res) {
       }
     }
     players.sort((a, b) => Math.max(b.goalIndex, b.gaIndex) - Math.max(a.goalIndex, a.gaIndex));
+    const message = players.length
+      ? (lineupKnown ? 'Formazioni pubblicate dal provider.' : 'Formazioni non ancora pubblicate: elenco provvisorio.') +
+        ' Indici basati su statistiche stagionali; non sono probabilità calibrate.' +
+        (diagnostics.length ? ' Avviso provider: ' + diagnostics.join(' | ') : '')
+      : 'Il provider non ha restituito giocatori con statistiche stagionali sufficienti per questa partita.' +
+        (diagnostics.length ? ' Dettagli: ' + diagnostics.join(' | ') : ' Verifica che il piano API-Football includa le statistiche di questa competizione/stagione.');
     res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=60');
     res.status(200).json({
-      message: (lineupKnown ? 'Formazioni pubblicate dal provider.' : 'Formazioni non ancora pubblicate: elenco provvisorio.') +
-        ' Indici basati su statistiche stagionali; non sono probabilità calibrate.',
+      message,
+      diagnostics,
       players: players.slice(0, 24)
     });
   } catch (error) {
