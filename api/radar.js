@@ -550,7 +550,7 @@ module.exports = async function handler(req, res) {
           probabilityModel:'poisson-shrunk-v1'
         };
       })
-      .sort((a,b)=>Math.max(b.goalIndex,b.gaIndex)-Math.max(a.goalIndex,a.gaIndex));
+      .sort((a,b)=>Math.max(b.goalProbability||0,b.gaProbability||0)-Math.max(a.goalProbability||0,a.gaProbability||0) || Math.max(b.goalIndex,b.gaIndex)-Math.max(a.goalIndex,a.gaIndex));
     const diagnostics = [];
     if (homeRecent.length<5 || awayRecent.length<5) diagnostics.push('Campione recente incompleto: ultime gare trovate casa='+homeRecent.length+', ospite='+awayRecent.length+'.');
     if (!uniqueMatches.length) diagnostics.push('Non sono state trovate partite concluse recenti per entrambe le squadre nei campionati coperti.');
