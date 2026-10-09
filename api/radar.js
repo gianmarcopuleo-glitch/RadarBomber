@@ -48,20 +48,23 @@ module.exports = async function handler(req, res) {
     }
 
     if (!req.query.fixture) {
-      const fixtures = await api('/fixtures?date=' + date + '&timezone=Europe%2FRome');
+      const fixtures = req.query.date
+        ? await api('/fixtures?date=' + encodeURIComponent(date) + '&timezone=Europe%2FRome')
+        : await api('/fixtures?next=50&timezone=Europe%2FRome');
       const preferred = fixtures.filter(f => ALLOWED_LEAGUES.has(Number(f.league && f.league.id)));
       // If today's matches use competitions outside our preferred list, show the real fixtures anyway
       // instead of making the dashboard look broken or empty.
       const useFallback = preferred.length === 0 && fixtures.length > 0;
       const visible = (useFallback ? fixtures : preferred).slice(0, 100);
       const message = fixtures.length === 0
-        ? 'Il provider non segnala partite per il ' + date + '. Prova più tardi o verifica il piano API-Football.'
+        ? 'API-Football non ha restituito partite per questa richiesta. Verifica il piano/copertura API e riprova.'
         : useFallback
-          ? 'Oggi non risultano partite nelle competizioni preferite: mostro le partite reali disponibili dal provider per il ' + date + '.'
-          : 'Partite reali aggiornate per il ' + date + '. Seleziona “Analizza giocatori” per consultare le statistiche.';
+          ? 'Nessuna competizione preferita trovata: mostro le prossime partite reali disponibili.'
+          : 'Prossime partite reali aggiornate. Seleziona “Analizza giocatori” per consultare le statistiche.';
       res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=60');
       res.status(200).json({
         date,
+        mode: req.query.date ? 'date' : 'upcoming',
         message,
         totalFixturesFromProvider: fixtures.length,
         usedFallback: useFallback,
@@ -70,7 +73,7 @@ module.exports = async function handler(req, res) {
           home: f.teams.home.name,
           away: f.teams.away.name,
           league: f.league.name,
-          time: f.fixture.date ? new Date(f.fixture.date).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' }) : '',
+          time: f.fixture.date ? new Date(f.fixture.date).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' }) : '',
           status: f.fixture.status.short
         }))
       });
