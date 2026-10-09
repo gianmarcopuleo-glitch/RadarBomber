@@ -8,11 +8,11 @@
 <section class="hero"><div><div class="eyebrow">MATCHDAY INTELLIGENCE</div><h2>Trova il segnale.<br>Valuta con criterio.</h2><p>Due classifiche distinte: probabilità di segnare e probabilità combinata di gol o assist. Confronta le quote inserite e registra gli esiti.</p></div><div class="stats"><div class="stat"><strong id="nPlayers">0</strong><span>Giocatori</span></div><div class="stat"><strong id="nPicks">0</strong><span>Proposte</span></div><div class="stat"><strong id="hitRate">—</strong><span>Hit rate</span></div></div></section>
 <nav class="tabs"><button class="active" data-tab="radar">Radar giocatori</button><button data-tab="odds">Quote</button><button data-tab="results">Storico tip</button><button data-tab="manage">Gestisci dati</button></nav>
 <section id="radar" class="pane"><section class="panel" id="livePanel">
-<div class="head"><div><h3>Radar reale — partite e giocatori</h3><div class="tiny">Calendario da PitchAPI; forma giocatori ricavata dai dati individuali di gol/assist nelle ultime 3 partite concluse disponibili. Gli indici sono comparativi, non probabilità garantite. Le formazioni non sono verificate.</div></div><button id="refreshLive" class="primary">Aggiorna dati live</button></div>
+<div class="head"><div><h3>Radar reale — giocatori prima di tutto</h3><div class="tiny">Scansione automatica delle partite filtrate: mette in evidenza i giocatori con indice gol o gol+assist almeno 70/100. Puoi tornare in ogni momento al palinsesto. Gli indici sono comparativi, non probabilità garantite. Le formazioni non sono verificate.</div></div><button id="refreshLive" class="primary">Aggiorna radar giocatori</button></div>
 <div id="liveStatus" class="note">Fonte dati: PitchAPI. Per attivarla, crea una chiave gratuita su pitchapi.dev e aggiungila su Vercel → progetto 9844 → Settings → Environment Variables come PITCHAPI_API_KEY. Poi fai Redeploy. La chiave deve restare su Vercel, mai nel codice pubblico o in chat. L'analisi usa statistiche di partite concluse recenti; non usa stagioni passate come se fossero attuali.</div>
 <div class="calendar-tools"><div><label class="calendar-label" for="liveDate">Scegli il giorno delle partite</label><input id="liveDate" type="date"></div><div class="date-actions"><button type="button" data-date-mode="today" class="active">Oggi</button><button type="button" data-date-mode="tomorrow">Domani</button><button type="button" data-date-mode="next">Tra 2 giorni</button></div></div><div id="liveMatches" class="players"><div class="empty">Premi “Aggiorna dati live” per caricare le partite in programma.</div></div>
 </section>
-<div class="panel"><div class="head"><div><h3>Archivio manuale giocatori</h3><div class="tiny">Non è una classifica live: mostra solo i profili con data partita di oggi o futura. Per i candidati aggiornati usa il pannello Radar reale qui sopra e premi “Analizza giocatori”. I profili senza data o con data passata non vengono più riproposti.</div></div><select id="sort" style="width:auto"><option value="goal">Ordina: prob. gol</option><option value="ga">Ordina: gol + assist</option><option value="form">Ordina: forma</option></select></div>
+<div class="panel"><div class="head"><div><h3>Archivio manuale giocatori</h3><div class="tiny">Non è una classifica live: mostra solo i profili con data partita di oggi o futura. Per i candidati aggiornati usa il Radar reale qui sopra: i giocatori vengono cercati automaticamente nelle partite filtrate. I profili senza data o con data passata non vengono più riproposti.</div></div><select id="sort" style="width:auto"><option value="goal">Ordina: prob. gol</option><option value="ga">Ordina: gol + assist</option><option value="form">Ordina: forma</option></select></div>
 <div class="tabs"><button class="active" data-kind="goal">Più probabili marcatore</button><button data-kind="ga">Gol + assist</button><button data-kind="all">Tutti</button></div>
 <div class="filters"><div><label>Cerca giocatore/squadra</label><input id="q" placeholder="Nome, squadra…"></div><div><label>Tipo squadra</label><select id="teamType"><option value="">Club e nazionali</option><option value="club">Club</option><option value="national">Nazionali</option></select></div><div><label>Competizione</label><select id="league"><option value="">Tutte le competizioni</option></select></div><div><label>Ruolo</label><select id="role"><option value="">Tutti</option><option>Attaccante</option><option>Centrocampista</option><option>Difensore</option></select></div><div><label>Prob. minima</label><select id="min"><option value="0">Tutte</option><option value="40">40%+</option><option value="55">55%+</option><option value="70">70%+</option></select></div></div><div id="players" class="players"></div>
 <div class="note"><b>Copertura prevista:</b> campionati nazionali e coppe nazionali; Champions League, Europa League, Conference League; Nations League, qualificazioni Europei e Mondiali, Europei e Mondiali. Le competizioni sudamericane sono escluse dal calendario live. La copertura dell’interfaccia non equivale ancora a un archivio automatico di tutti i giocatori: serve collegare un provider dati.</div><div class="note"><b>Nota:</b> calendari e statistiche dei giocatori vengono richiesti a PitchAPI quando disponibili. Gli indici sono indicatori statistici, non probabilità calibrate. Le quote dei bookmaker, incluso Bet365, restano manuali e vanno aggiornate verificandole direttamente sul sito.</div></div></section>
@@ -55,16 +55,40 @@ function setLiveDate(mode){const input=document.getElementById('liveDate');if(!i
 async function refreshLive(){
  const status=document.getElementById('liveStatus'),out=document.getElementById('liveMatches'),btn=document.getElementById('refreshLive');
  if(!status||!out)return;
- btn.disabled=true;btn.textContent='Aggiornamento…';status.textContent='Controllo delle partite e delle formazioni…';
+ btn.disabled=true;btn.textContent='Aggiornamento…';status.textContent='Carico il calendario e cerco automaticamente i giocatori migliori…';
  try{
   const selectedDate=document.getElementById('liveDate')?.value||localDateISO();
   const r=await fetch('/api/radar?date='+encodeURIComponent(selectedDate),{cache:'no-store'});
   const data=await r.json();
   if(!r.ok)throw new Error(data.error||'Servizio temporaneamente non disponibile');
-  status.textContent=data.message||('Aggiornato: '+new Date().toLocaleTimeString('it-IT')+'. Dati statistici da PitchAPI.');
-  out.innerHTML=(data.fixtures||[]).length?(data.fixtures||[]).map(f=>'<article class="player" style="grid-template-columns:1fr auto"><div><div class="name">'+esc(f.home)+' – '+esc(f.away)+'</div><div class="team">'+esc(f.league)+' · '+esc(f.time||'Orario non disponibile')+' · '+esc(f.status||'In programma')+'</div><div class="tiny">Quote mediane 1X2 · Casa '+esc(f.homeOdds)+' · Trasferta '+esc(f.awayOdds)+' · Favorita: '+(f.favorite==='home'?'casa':'trasferta')+'</div></div><div><button data-fixture="'+esc(f.id)+'" onclick="loadLivePlayers(this.dataset.fixture)">Analizza giocatori</button></div></article>').join(''):'<div class="empty">'+esc(data.message||'Nessuna partita con quote disponibili che rispetti i filtri. Verifica ODDS_API_KEY e riprova.')+'</div>';
- }catch(e){status.textContent='Dati live non disponibili: '+e.message+'. Se la chiave API non è ancora configurata, segui i due passaggi indicati sotto.';out.innerHTML='<div class="empty">Nessun dato reale caricato. Non vengono mostrati consigli inventati.</div>'}
- finally{btn.disabled=false;btn.textContent='Aggiorna dati live'}
+  const fixtures=data.fixtures||[];
+  if(!fixtures.length){status.textContent=data.message||'Nessuna partita filtrata disponibile.';out.innerHTML='<div class="empty">'+esc(data.message||'Nessuna partita con quote disponibili che rispetti i filtri.')+'</div>';return}
+  await scanFixturesForPlayers(fixtures);
+ }catch(e){status.textContent='Dati live non disponibili: '+e.message+'. Verifica le chiavi API e riprova.';out.innerHTML='<div class="empty">Nessun dato reale caricato. Non vengono mostrati consigli inventati.</div>'}
+ finally{btn.disabled=false;btn.textContent='Aggiorna radar giocatori'}
+}
+async function scanFixturesForPlayers(fixtures){
+ const status=document.getElementById('liveStatus'),out=document.getElementById('liveMatches');
+ const selectedDate=document.getElementById('liveDate')?.value||localDateISO();
+ // Per contenere tempi e chiamate al provider analizziamo al massimo le prime 8 partite
+ // già filtrate per quote e competizioni. L'utente può comunque aprire ogni singola partita.
+ const batch=fixtures.slice(0,8),all=[];
+ out.innerHTML='<div class="empty">Sto analizzando le partite selezionate…</div>';
+ for(let i=0;i<batch.length;i++){
+  const f=batch[i];
+  status.textContent='Radar giocatori: analisi '+(i+1)+' di '+batch.length+' — '+f.home+' – '+f.away+'.';
+  try{
+   const r=await fetch('/api/radar?fixture='+encodeURIComponent(f.id)+'&date='+encodeURIComponent(selectedDate),{cache:'no-store'});
+   const data=await r.json();
+   if(r.ok)(data.players||[]).forEach(p=>all.push({...p,fixtureId:String(f.id),matchLabel:f.home+' – '+f.away,leagueLabel:f.league,matchTime:f.time,homeOdds:f.homeOdds,awayOdds:f.awayOdds,favorite:f.favorite}));
+  }catch(e){}
+ }
+ livePlayersData=all;
+ liveFixtureId=null;
+ liveSort='goal';
+ window.liveFixtureDetails=batch;
+ renderLivePlayers();
+ status.textContent='Radar aggiornato: '+all.filter(p=>Number(p.goalIndex)>=70||Number(p.gaIndex)>=70).length+' candidati qualificati trovati su '+batch.length+' partite analizzate. '+(fixtures.length>batch.length?'Per rapidità sono state analizzate le prime 8 partite filtrate; le altre '+(fixtures.length-batch.length)+' restano disponibili nel calendario.':'');
 }
 async function loadLivePlayers(fixtureId){
  const status=document.getElementById('liveStatus'),out=document.getElementById('liveMatches');
@@ -74,11 +98,20 @@ async function loadLivePlayers(fixtureId){
   const r=await fetch('/api/radar?fixture='+encodeURIComponent(fixtureId)+'&date='+encodeURIComponent(selectedDate),{cache:'no-store'}),data=await r.json();
   if(!r.ok)throw new Error(data.error||'Errore nel recupero statistiche');
   status.textContent=data.message||'Analisi aggiornata.';
-  livePlayersData=data.players||[];
+  livePlayersData=(data.players||[]).map(p=>({...p,fixtureId:String(fixtureId)}));
   liveFixtureId=fixtureId;
   liveSort='goal';
   renderLivePlayers();
  }catch(e){status.textContent='Impossibile analizzare questa partita: '+e.message;out.innerHTML='<div class="empty">Controlla la configurazione della fonte dati e riprova.</div>'}
+}
+function showLiveFixtures(){
+ const out=document.getElementById('liveMatches');
+ if(!out)return;
+ const fixtures=window.liveFixtureDetails||[];
+ livePlayersData=[];
+ liveFixtureId=null;
+ out.innerHTML=fixtures.length?fixtures.map(f=>'<article class="player" style="grid-template-columns:1fr auto"><div><div class="name">'+esc(f.home)+' – '+esc(f.away)+'</div><div class="team">'+esc(f.league)+' · '+esc(f.time||'Orario non disponibile')+' · '+esc(f.status||'In programma')+'</div><div class="tiny">Quote mediane 1X2 · Casa '+esc(f.homeOdds)+' · Trasferta '+esc(f.awayOdds)+' · Favorita: '+(f.favorite==='home'?'casa':'trasferta')+'</div></div><div><button data-fixture="'+esc(f.id)+'" onclick="loadLivePlayers(this.dataset.fixture)">Analizza partita</button></div></article>').join(''):'<div class="empty">Aggiorna il radar per caricare le partite.</div>';
+ status.textContent='Calendario generale: '+fixtures.length+' partite disponibili.';
 }
 function setLiveSort(mode){
  liveSort=mode==='ga'?'ga':'goal';
@@ -89,11 +122,13 @@ function renderLivePlayers(){
  if(!out)return;
  const qualified=livePlayersData.filter(p=>Number(p.goalIndex)>=70||Number(p.gaIndex)>=70);
  const list=qualified.slice().sort((a,b)=>liveSort==='ga'?b.gaIndex-a.gaIndex:b.goalIndex-a.goalIndex);
+ const isBatch=liveFixtureId===null;
+ const backButton=isBatch?'<button onclick="showLiveFixtures()">Vedi palinsesto partite</button>':'<button onclick="showLiveFixtures()">← Torna al radar generale</button>';
  if(!list.length){
-  out.innerHTML='<div class="empty">Nessun giocatore supera la soglia richiesta: serve un indice maggiore o uguale a 70/100 nel gol oppure nel gol + assist. Prova un\'altra partita o una data diversa.</div>';
+  out.innerHTML=backButton+'<div class="empty">Nessun giocatore supera la soglia richiesta: serve un indice maggiore o uguale a 70/100 nel gol oppure nel gol + assist. Prova un\'altra partita o una data diversa.</div>';
   return;
  }
- out.innerHTML='<div class="note">Mostro solo candidati con indice maggiore o uguale a 70/100 nel gol oppure nel gol + assist ('+list.length+' giocatori). Questi indici sono indicatori comparativi basati sulle statistiche recenti, non probabilità reali calibrate.</div><div class="actions" style="margin:10px 0"><button class="'+(liveSort==='goal'?'primary':'')+'" onclick="setLiveSort(\'goal\')">Ordina per indice gol</button><button class="'+(liveSort==='ga'?'primary':'')+'" onclick="setLiveSort(\'ga\')">Ordina per indice gol + assist</button></div>'+list.map(p=>'<article class="player"><div><div class="name">'+esc(p.name)+'</div><div class="team">'+esc(p.team)+' · '+esc(p.position||'Ruolo n.d.')+' · '+(p.lineupConfirmed?'Titolare ufficiale':p.lineupKnown?'Titolare probabile':'Formazione non disponibile')+(p.injured?' · ASSENTE/INFORTUNIO':'')+'</div><div class="tiny">'+p.goals+' gol · '+p.assists+' assist nelle ultime '+p.recentMatches+' gare della squadra</div></div><div><div class="tiny">Indice gol</div><div class="score">'+p.goalIndex+'/100</div></div><div><div class="tiny">Indice gol + assist</div><div class="score">'+p.gaIndex+'/100</div></div><div><button onclick="saveLivePick('+esc(JSON.stringify(String(liveFixtureId)))+','+esc(JSON.stringify(p.name))+','+esc(JSON.stringify(p.team))+',\'goal\','+p.goalIndex+')">Tip gol</button><button style="margin-top:5px" onclick="saveLivePick('+esc(JSON.stringify(String(liveFixtureId)))+','+esc(JSON.stringify(p.name))+','+esc(JSON.stringify(p.team))+',\'ga\','+p.gaIndex+')">Tip G+A</button></div></article>').join('');
+ out.innerHTML=backButton+'<div class="note">Mostro solo candidati con indice maggiore o uguale a 70/100 nel gol oppure nel gol + assist ('+list.length+' giocatori). Gli indici sono indicatori comparativi basati sulle statistiche recenti, non probabilità reali calibrate. '+(isBatch?'La scansione automatica considera fino a 8 partite per aggiornamento.':'')+'</div><div class="actions" style="margin:10px 0"><button class="'+(liveSort==='goal'?'primary':'')+'" onclick="setLiveSort(\'goal\')">Ordina per indice gol</button><button class="'+(liveSort==='ga'?'primary':'')+'" onclick="setLiveSort(\'ga\')">Ordina per indice gol + assist</button></div>'+list.map(p=>'<article class="player"><div><div class="name">'+esc(p.name)+'</div><div class="team">'+esc(p.team)+' · '+esc(p.position||'Ruolo n.d.')+' · '+(p.lineupConfirmed?'Titolare ufficiale':p.lineupKnown?'Titolare probabile':'Formazione non disponibile')+(p.injured?' · ASSENTE/INFORTUNIO':'')+'</div><div class="tiny">'+esc(p.matchLabel||'Partita selezionata')+' · '+esc(p.leagueLabel||'')+' · '+p.goals+' gol · '+p.assists+' assist nelle ultime '+p.recentMatches+' gare</div><div class="tiny">Quote partita: casa '+esc(p.homeOdds??'n.d.')+' · trasferta '+esc(p.awayOdds??'n.d.')+' · favorita '+(p.favorite==='home'?'casa':p.favorite==='away'?'trasferta':'n.d.')+'</div></div><div><div class="tiny">Indice gol</div><div class="score">'+p.goalIndex+'/100</div></div><div><div class="tiny">Indice gol + assist</div><div class="score">'+p.gaIndex+'/100</div></div><div><button onclick="saveLivePick('+esc(JSON.stringify(String(p.fixtureId||liveFixtureId)))+','+esc(JSON.stringify(p.name))+','+esc(JSON.stringify(p.team))+',\'goal\','+p.goalIndex+')">Tip gol</button><button style="margin-top:5px" onclick="saveLivePick('+esc(JSON.stringify(String(p.fixtureId||liveFixtureId)))+','+esc(JSON.stringify(p.name))+','+esc(JSON.stringify(p.team))+',\'ga\','+p.gaIndex+')">Tip G+A</button></div></article>').join('');
 }
 function saveLivePick(fixtureId,name,team,market,index){
  const p={id:'live_'+Date.now(),playerId:'live_'+fixtureId+'_'+name,name,team,match:'Partita ID '+fixtureId,matchDate:new Date().toISOString().slice(0,10),market,prob:index,odd:null,date:new Date().toLocaleDateString('it-IT'),createdAt:new Date().toISOString(),result:'pending',source:'PitchAPI — statistiche recenti'};
