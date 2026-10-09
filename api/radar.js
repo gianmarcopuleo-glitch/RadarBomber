@@ -40,13 +40,18 @@ const LEAGUE_ALIASES = {
   'fifa world cup':'fifa world cup','world cup':'fifa world cup','mondiali':'fifa world cup',
   'uefa european qualifiers':'uefa european qualifiers','european qualifiers':'uefa european qualifiers',
   'world cup qualification europe':'world cup qualification europe','uefa world cup qualifiers':'world cup qualification europe'
+  'portugal primeira liga':'primeira liga',
+  'primeira division':'la liga',
+  'primera division spain':'la liga',
+  'ligue 1 france':'ligue 1',
+  'serie a italy':'serie a',
 };
 const LEAGUE_PRIORITY = [
-  'Serie A','Premier League','La Liga','Bundesliga','Ligue 1',
-  'Eredivisie','Primeira Liga','Süper Lig','Belgian Pro League','Saudi Pro League',
+  'Serie A','Ligue 1','Primeira Liga','La Liga','Bundesliga','Premier League',
+  'Süper Lig','Eredivisie',
   'UEFA Champions League','UEFA Europa League','UEFA Conference League',
-  'UEFA Nations League','European Championship','FIFA World Cup',
-  'UEFA European Qualifiers','World Cup Qualification Europe'
+  'UEFA Nations League','UEFA European Qualifiers',
+  'World Cup Qualification Europe','European Championship','FIFA World Cup'
 ];
 const EXCLUDED_LEAGUE_NAMES = new Set([
   'serie b','ligue 2','championship','segunda division','2 bundesliga',
