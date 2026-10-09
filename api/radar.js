@@ -122,8 +122,14 @@ module.exports = async function handler(req, res) {
     const endDate = new Date();
     const startDate = new Date(endDate.getTime() - 35 * 24 * 60 * 60 * 1000);
     const isoDate = d => d.toISOString().slice(0, 10);
+    // API-Football requires season when the fixtures endpoint is filtered by team.
+    // European domestic seasons start in July; before July, use the season that began the previous year.
+    const seasonYear = endDate.getUTCMonth() >= 6
+      ? endDate.getUTCFullYear()
+      : endDate.getUTCFullYear() - 1;
     const recentMatches = async teamId => {
       const path = '/fixtures?team=' + teamId +
+        '&season=' + seasonYear +
         '&from=' + isoDate(startDate) + '&to=' + isoDate(endDate);
       const result = await optional(path);
       if (result.error) diagnostics.push('Ultime partite squadra ' + teamId + ': ' + result.error);
