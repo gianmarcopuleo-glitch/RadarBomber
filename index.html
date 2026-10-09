@@ -95,8 +95,8 @@ async function scanFixturesForPlayers(fixtures){
  // Nel weekend analizziamo fino a 15 partite per ciascun giorno, per non favorire solo il sabato.
  const days=[...new Set(fixtures.map(f=>f.scanDate||selectedDate))];
  const batch=weekendScan
-   ? days.flatMap(day=>fixtures.filter(f=>(f.scanDate||selectedDate)===day).slice(0,15))
-   : fixtures.slice(0,30);
+   ? days.flatMap(day=>fixtures.filter(f=>(f.scanDate||selectedDate)===day).slice(0,30))
+   : fixtures.slice(0,50);
  const all=[],detailFailures=[];
  out.innerHTML='<div class="empty">Sto analizzando le partite selezionate…</div>';
  for(let i=0;i<batch.length;i++){
