@@ -2,7 +2,7 @@
 const BASE = 'https://v3.football.api-sports.io';
 const ALLOWED_LEAGUES = new Set([39, 140, 135, 78, 61, 2, 3, 848, 45, 143, 94, 88]);
 async function api(path) {
-  const key = process.env.API_FOOTBALL_KEY;
+  const key = (process.env.API_FOOTBALL_KEY || '').trim();
   if (!key) { const e = new Error('Chiave API non configurata'); e.status = 503; throw e; }
   const response = await fetch(BASE + path, { headers: { 'x-apisports-key': key }, signal: AbortSignal.timeout(9000) });
   const json = await response.json();
@@ -22,13 +22,16 @@ function indexFor(goals, assists, minutes, apps, kind) {
   return Math.max(0, Math.min(99, Math.round(score)));
 }
 module.exports = async function handler(req, res) {
-  res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=300');
   try {
-    const date = String(req.query.date || new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Rome' }));
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now);
+    const localDate = `${parts.find(p => p.type === 'year').value}-${parts.find(p => p.type === 'month').value}-${parts.find(p => p.type === 'day').value}`;
+    const date = String(req.query.date || localDate);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { res.status(400).json({error:'Data non valida'}); return; }
     if (!req.query.fixture) {
       const fixtures = await api('/fixtures?date=' + date + '&timezone=Europe%2FRome');
       const selected = fixtures.filter(f => ALLOWED_LEAGUES.has(Number(f.league && f.league.id)));
+      res.setHeader('Cache-Control', 's-maxage=120, stale-while-revalidate=120');
       res.status(200).json({message:'Partite aggiornate alle ' + new Date().toLocaleTimeString('it-IT') + '. Selezione di competizioni principali; dati memorizzati in cache per 5 minuti.', fixtures:selected.map(f=>({id:f.fixture.id,home:f.teams.home.name,away:f.teams.away.name,league:f.league.name,time:f.fixture.date?new Date(f.fixture.date).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Rome'}):'',status:f.fixture.status.short}))});
       return;
     }
@@ -58,8 +61,11 @@ module.exports = async function handler(req, res) {
       }
     }
     players.sort((a,b)=>Math.max(b.goalIndex,b.gaIndex)-Math.max(a.goalIndex,a.gaIndex));
+    res.setHeader('Cache-Control', 's-maxage=120, stale-while-revalidate=120');
     res.status(200).json({message:(lineupKnown?'Formazioni pubblicate dal provider.':'Formazioni non ancora pubblicate: elenco provvisorio.')+' Indici basati su statistiche stagionali; non sono probabilità calibrate.',players:players.slice(0,24)});
   } catch (error) {
+    // Never cache missing-key or provider errors: an updated Vercel secret must take effect immediately.
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
     res.status(error.status || 502).json({error:error.status===503?'Chiave API mancante: aggiungi API_FOOTBALL_KEY nelle Environment Variables del progetto Vercel.':(error.message || 'Errore temporaneo del provider')});
   }
 };
