@@ -70,15 +70,21 @@ async function refreshLive(){
  try{
   const selectedDate=document.getElementById('liveDate')?.value||localDateISO();
   const dates=weekendScan?[selectedDate,localDateISO(new Date(new Date(selectedDate+'T12:00:00').getTime()+86400000))]:[selectedDate];
-  const fixtureSets=[];
+  const fixtureSets=[],diagnosticsSets=[];
   for(const day of dates){
    const r=await fetch('/api/radar?date='+encodeURIComponent(day),{cache:'no-store'});
    const data=await r.json();
    if(!r.ok)throw new Error(data.error||'Servizio temporaneamente non disponibile');
+   if(data.diagnostics)diagnosticsSets.push(data.diagnostics);
    fixtureSets.push(...(data.fixtures||[]).filter(qualifiesByOdds).map(f=>({...f,scanDate:day})));
   }
   const fixtures=[...new Map(fixtureSets.map(f=>[String(f.id),f])).values()];
-  if(!fixtures.length){status.textContent='Nessuna partita filtrata disponibile per '+(weekendScan?'il weekend selezionato':selectedDate)+'.';out.innerHTML='<div class="empty">'+esc(status.textContent)+'</div>';return}
+  if(!fixtures.length){
+   const d=diagnosticsSets.reduce((a,x)=>{a.provider+=Number(x.providerFixtures)||0;a.eligible+=Number(x.eligibleFixtures)||0;a.noEvent+=Number(x.odds?.noMatchingEvent)||0;a.no1x2+=Number(x.odds?.missing1X2)||0;a.threshold+=Number(x.odds?.thresholdRejected)||0;a.errors+=Number(x.odds?.apiErrors)||0;a.mapping+=Number(x.odds?.missingSportMapping)||0;return a;},{provider:0,eligible:0,noEvent:0,no1x2:0,threshold:0,errors:0,mapping:0});
+   status.textContent='Nessuna partita supera il filtro quote. Controllo: '+d.provider+' partite ricevute; '+d.eligible+' di campionati ammessi; '+d.noEvent+' senza corrispondenza quote; '+d.no1x2+' senza quote 1X2 complete; '+d.threshold+' escluse per soglia; '+d.errors+' errori API; '+d.mapping+' competizioni senza mappatura quote.';
+   out.innerHTML='<div class="empty">'+esc(status.textContent)+'</div>';
+   return;
+  }
   await scanFixturesForPlayers(fixtures);
  }catch(e){status.textContent='Dati live non disponibili: '+e.message+'. Verifica le chiavi API e riprova.';out.innerHTML='<div class="empty">Nessun dato reale caricato. Non vengono mostrati consigli inventati.</div>'}
  finally{btn.disabled=false;btn.textContent='Aggiorna radar giocatori'}
