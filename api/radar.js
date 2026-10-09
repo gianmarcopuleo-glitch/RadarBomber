@@ -12,16 +12,14 @@ const LEAGUE_PRIORITY = [
   'UEFA Champions League','Champions League',
   'UEFA Europa League','Europa League',
   'UEFA Conference League','Conference League',
-  // Competizioni internazionali per club
-  'Copa Libertadores','CONMEBOL Libertadores',
-  // Nazionali: tornei e qualificazioni
+  // Nazionali: tornei e qualificazioni europee.
+  // Escludiamo le competizioni sudamericane e le qualificazioni mondiali
+  // senza indicazione geografica, che possono includere CONMEBOL.
   'UEFA Nations League','Nations League',
   'European Championship','UEFA Euro','Europei',
   'FIFA World Cup','World Cup','Mondiali',
   'UEFA European Qualifiers','European Qualifiers',
-  'World Cup Qualification Europe','World Cup Qualifiers',
-  'FIFA World Cup qualification','World Cup Qualification',
-  'UEFA World Cup Qualifiers'
+  'World Cup Qualification Europe','UEFA World Cup Qualifiers'
 ];
 const ALLOWED_LEAGUES = LEAGUE_PRIORITY;
 const normalize = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -113,12 +111,24 @@ module.exports = async function handler(req, res) {
     let lineupAvailable = false;
     try {
       const lineupData = await pitch('/matches/' + encodeURIComponent(fixtureId) + '/lineups');
-      for (const side of [lineupData.home, lineupData.away]) {
-        for (const p of [...(side && side.starters || []), ...(side && side.bench || [])]) {
-          if (p && p.player_id) lineupPlayerIds.add(String(p.player_id));
+      // Le formazioni previste possono essere costruite dal provider usando
+      // l'ultimo undici disponibile e contenere giocatori ormai trasferiti.
+      // Accettiamo quindi solo formazioni CONFERMATE e riferite alle squadre
+      // esatte della partita selezionata.
+      const lineupTeamsMatch =
+        String(lineupData.home_team && lineupData.home_team.id || '') === homeId &&
+        String(lineupData.away_team && lineupData.away_team.id || '') === awayId;
+      const lineupsConfirmed = lineupTeamsMatch &&
+        lineupData.home && lineupData.home.confirmed === true &&
+        lineupData.away && lineupData.away.confirmed === true;
+      if (lineupsConfirmed) {
+        for (const side of [lineupData.home, lineupData.away]) {
+          for (const p of [...(side && side.starters || []), ...(side && side.bench || [])]) {
+            if (p && p.player_id) lineupPlayerIds.add(String(p.player_id));
+          }
         }
       }
-      lineupAvailable = lineupPlayerIds.size > 0;
+      lineupAvailable = lineupsConfirmed && lineupPlayerIds.size > 0;
     } catch {}
 
     // Get the current seasons for the supported leagues and search the most recent completed
@@ -197,7 +207,7 @@ module.exports = async function handler(req, res) {
     const message = players.length
       ? 'Radar forma recente: giocatori con gol o assist nelle ultime gare, verificati anche nella formazione prevista/confermata della partita selezionata. ' + diagnostics.join(' | ')
       : !lineupAvailable
-        ? 'Formazione prevista/confermata non ancora disponibile su PitchAPI: per evitare di mostrare giocatori di vecchie rose, la lista viene lasciata vuota. Riprova più vicino al calcio d’inizio.'
+        ? 'Formazione confermata e verificata non ancora disponibile su PitchAPI. Le formazioni previste non vengono usate perché possono contenere giocatori di rose precedenti: la lista resta vuota finché la formazione ufficiale non è confermata.'
         : 'Nessun giocatore della formazione pubblicata ha gol o assist rilevati nelle partite recenti disponibili. ' + diagnostics.join(' | ');
     // L'analisi non va memorizzata a lungo: rose e formazioni possono cambiare.
     res.setHeader('Cache-Control','no-store, max-age=0');
