@@ -69,8 +69,8 @@ const ODDS_SPORT_BY_LEAGUE = {
 const oddsCache = new Map();
 const oddsSportForLeague = name => ODDS_SPORT_BY_LEAGUE[normalize(name)];
 const teamKey = name => normalize(name)
-  .replace(/\\b(fc|cf|ac|sc|ssc|as|us|afc|cfc|calcio|club|de|the)\\b/g,' ')
-  .replace(/\\s+/g,' ').trim();
+  .replace(/\b(fc|cf|ac|sc|ssc|as|us|afc|cfc|calcio|club|de|the)\b/g,' ')
+  .replace(/\s+/g,' ').trim();
 const sameTeam = (a,b) => {
   const x=teamKey(a), y=teamKey(b);
   return !!x && !!y && (x===y || (Math.min(x.length,y.length)>=5 && (x.includes(y)||y.includes(x))));
@@ -170,6 +170,9 @@ module.exports = async function handler(req, res) {
     const date = String(req.query.date || today);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({error:'Data non valida'});
     if (!req.query.fixture) {
+      if (!(process.env.ODDS_API_KEY || '').trim()) {
+        return res.status(503).json({error:'Filtro quote non attivo: aggiungi ODDS_API_KEY nelle Environment Variables di Vercel e ridistribuisci il progetto.'});
+      }
       const result = await pitch('/date/' + encodeURIComponent(date) + '?status=upcoming');
       const matches = Array.isArray(result.matches) ? result.matches : [];
       // Convalidiamo le competizioni con il catalogo ufficiale: il solo nome
