@@ -419,15 +419,23 @@ module.exports = async function handler(req, res) {
         const pb=LEAGUE_PRIORITY.findIndex(x=>canonicalLeague(x)===canonicalLeague(lb));
         return (pa<0?999:pa)-(pb<0?999:pb);
       });
+      const oddsDiagnostics={missingSportMapping:0,noMatchingEvent:0,missing1X2:0,thresholdRejected:0,apiErrors:0,errorSamples:[]};
       const oddsChecks = await Promise.all(orderedEligibleMatches.map(async m=>{
         try {
+          const sportKey=oddsSportForLeague(m.league&&m.league.name);
+          if(!sportKey){oddsDiagnostics.missingSportMapping++;return null;}
           const prices=await oddsForFixture(m);
-          if(!prices || prices.homeOdds==null || prices.awayOdds==null) return null;
+          if(!prices){oddsDiagnostics.noMatchingEvent++;return null;}
+          if(prices.homeOdds==null || prices.awayOdds==null){oddsDiagnostics.missing1X2++;return null;}
           const homeFavorite=prices.homeOdds<prices.awayOdds && prices.homeOdds<=1.65;
           const awayFavorite=prices.awayOdds<prices.homeOdds && prices.awayOdds<=1.55;
-          if(!homeFavorite && !awayFavorite) return null;
+          if(!homeFavorite && !awayFavorite){oddsDiagnostics.thresholdRejected++;return null;}
           return {m,prices,favorite:homeFavorite?'home':'away'};
-        } catch { return null; }
+        } catch(e) {
+          oddsDiagnostics.apiErrors++;
+          if(oddsDiagnostics.errorSamples.length<3)oddsDiagnostics.errorSamples.push(String(e&&e.message||e).slice(0,180));
+          return null;
+        }
       }));
       const qualifiedMatches=oddsChecks.filter(Boolean);
       const fixtures = qualifiedMatches.slice(0,60).map(({m,prices,favorite})=>({
@@ -448,7 +456,7 @@ module.exports = async function handler(req, res) {
       for(const m of matches){const n=m.league&&m.league.name||'Senza competizione';leagueCounts[n]=(leagueCounts[n]||0)+1;}
       const eligibleLeagueCounts={};
       for(const m of eligibleMatches){const n=m.league&&m.league.name||'Senza competizione';eligibleLeagueCounts[n]=(eligibleLeagueCounts[n]||0)+1;}
-      const diagnostics={date,providerFixtures:matches.length,catalogLeagues:catalogLeagues.length,eligibleFixtures:eligibleMatches.length,qualifyingFixtures:fixtures.length,providerLeagueCounts:leagueCounts,eligibleLeagueCounts};
+      const diagnostics={date,providerFixtures:matches.length,catalogLeagues:catalogLeagues.length,eligibleFixtures:eligibleMatches.length,qualifyingFixtures:fixtures.length,providerLeagueCounts:leagueCounts,eligibleLeagueCounts,odds:oddsDiagnostics};
       const message=fixtures.length
         ? 'Filtro obbligatorio applicato: favorita in casa ≤ 1,65 oppure favorita in trasferta ≤ 1,55. Sono incluse solo partite con quote 1X2 disponibili; nell’analisi saranno valutati i giocatori della sola squadra favorita.'
         : 'Nessuna partita delle competizioni ammesse supera il filtro quote: favorita in casa ≤ 1,65 oppure favorita in trasferta ≤ 1,55. Le partite senza quote disponibili sono escluse.';
