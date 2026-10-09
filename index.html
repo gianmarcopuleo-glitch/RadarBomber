@@ -85,7 +85,7 @@ async function scanFixturesForPlayers(fixtures){
  }
  livePlayersData=all;
  liveFixtureId=null;
- liveSort='goal';
+ liveSort='best';
  window.liveFixtureDetails=batch;
  renderLivePlayers();
  status.textContent='Radar aggiornato: '+all.filter(p=>Number(p.goalIndex)>=70||Number(p.gaIndex)>=70).length+' candidati qualificati trovati su '+batch.length+' partite analizzate. '+(fixtures.length>batch.length?'Per contenere i tempi sono state analizzate le prime 30 partite filtrate; le altre '+(fixtures.length-batch.length)+' restano disponibili nel calendario.':'');
@@ -114,21 +114,21 @@ function showLiveFixtures(){
  status.textContent='Calendario generale: '+fixtures.length+' partite disponibili.';
 }
 function setLiveSort(mode){
- liveSort=mode==='ga'?'ga':'goal';
+ liveSort=mode==='ga'?'ga':mode==='goal'?'goal':'best';
  renderLivePlayers();
 }
 function renderLivePlayers(){
  const out=document.getElementById('liveMatches');
  if(!out)return;
- const qualified=livePlayersData.filter(p=>Number(p.goalIndex)>=50||Number(p.gaIndex)>=50);
- const list=qualified.slice().sort((a,b)=>liveSort==='ga'?b.gaIndex-a.gaIndex:b.goalIndex-a.goalIndex);
+ const qualified=livePlayersData.filter(p=>Number(p.goalIndex)>=74||Number(p.gaIndex)>=74);
+ const list=qualified.slice().sort((a,b)=>liveSort==='ga'?b.gaIndex-a.gaIndex:liveSort==='goal'?b.goalIndex-a.goalIndex:Math.max(b.goalIndex,b.gaIndex)-Math.max(a.goalIndex,a.gaIndex));
  const isBatch=liveFixtureId===null;
  const backButton=isBatch?'<button onclick="showLiveFixtures()">Vedi palinsesto partite</button>':'<button onclick="showLiveFixtures()">← Torna al radar generale</button>';
  if(!list.length){
-  out.innerHTML=backButton+'<div class="empty">Nessun giocatore raggiunge 50/100 nel gol o nel gol + assist nelle statistiche disponibili. Prova un'altra partita o una data diversa.</div>';
+  out.innerHTML=backButton+'<div class="empty">Nessun giocatore raggiunge 74/100 nell'indice gol o gol + assist nelle statistiche disponibili. Prova un'altra partita o una data diversa.</div>';
   return;
  }
- out.innerHTML=backButton+'<div class="note">Mostro giocatori con indice di almeno 50/100; da 70/100 sono candidati che superano la soglia principale, mentre da 50 a 69 sono da monitorare. Gli indici sono comparativi, non probabilità reali calibrate ('+list.length+' giocatori). '+(isBatch?'La scansione automatica considera fino a 30 partite per aggiornamento.':'')+'</div><div class="actions" style="margin:10px 0"><button class="'+(liveSort==='goal'?'primary':'')+'" onclick="setLiveSort(\'goal\')">Ordina per indice gol</button><button class="'+(liveSort==='ga'?'primary':'')+'" onclick="setLiveSort(\'ga\')">Ordina per indice gol + assist</button></div>'+list.map(p=>'<article class="player"><div><div class="name">'+esc(p.name)+'</div><div class="team">'+esc(p.team)+' · '+esc(p.position||'Ruolo n.d.')+' · '+(p.lineupConfirmed?'Titolare ufficiale':p.lineupKnown?'Titolare probabile':'Formazione non disponibile')+(p.injured?' · ASSENTE/INFORTUNIO':'')+'</div><div class="tiny">'+esc(p.matchLabel||'Partita selezionata')+' · '+esc(p.leagueLabel||'')+' · '+p.goals+' gol · '+p.assists+' assist nelle ultime '+p.recentMatches+' gare</div><div class="tiny">Analisi basata sulle statistiche recenti; quote delle squadre non utilizzate</div></div><div><div class="tiny">Indice gol</div><div class="score">'+p.goalIndex+'/100</div></div><div><div class="tiny">Indice gol + assist</div><div class="score">'+p.gaIndex+'/100</div></div><div><button onclick="saveLivePick('+esc(JSON.stringify(String(p.fixtureId||liveFixtureId)))+','+esc(JSON.stringify(p.name))+','+esc(JSON.stringify(p.team))+',\'goal\','+p.goalIndex+')">Tip gol</button><button style="margin-top:5px" onclick="saveLivePick('+esc(JSON.stringify(String(p.fixtureId||liveFixtureId)))+','+esc(JSON.stringify(p.name))+','+esc(JSON.stringify(p.team))+',\'ga\','+p.gaIndex+')">Tip G+A</button></div></article>').join('');
+ out.innerHTML=backButton+'<div class="note">Mostro soltanto giocatori con indice di almeno 74/100 nel gol oppure nel gol + assist. L'indice è un indicatore statistico derivato dai gol/assist recenti, non una probabilità reale calibrata ('+list.length+' giocatori). '+(isBatch?'La scansione automatica considera fino a 30 partite per aggiornamento.':'')+'</div><div class="actions" style="margin:10px 0"><button class="'+(liveSort==='best'?'primary':'')+'" onclick="setLiveSort(\'best\')">Ordina per indice più alto</button><button class="'+(liveSort==='goal'?'primary':'')+'" onclick="setLiveSort(\'goal\')">Ordina per indice gol</button><button class="'+(liveSort==='ga'?'primary':'')+'" onclick="setLiveSort(\'ga\')">Ordina per indice gol + assist</button></div>'+list.map(p=>'<article class="player"><div><div class="name">'+esc(p.name)+'</div><div class="team">'+esc(p.team)+' · '+esc(p.position||'Ruolo n.d.')+' · '+(p.lineupConfirmed?'Titolare ufficiale':p.lineupKnown?'Titolare probabile':'Formazione non disponibile')+(p.injured?' · ASSENTE/INFORTUNIO':'')+'</div><div class="tiny">'+esc(p.matchLabel||'Partita selezionata')+' · '+esc(p.leagueLabel||'')+' · '+p.goals+' gol · '+p.assists+' assist nelle ultime '+p.recentMatches+' gare</div><div class="tiny">Analisi basata sulle statistiche recenti; quote delle squadre non utilizzate</div></div><div><div class="tiny">Indice gol</div><div class="score">'+p.goalIndex+'/100</div></div><div><div class="tiny">Indice gol + assist</div><div class="score">'+p.gaIndex+'/100</div></div><div><button onclick="saveLivePick('+esc(JSON.stringify(String(p.fixtureId||liveFixtureId)))+','+esc(JSON.stringify(p.name))+','+esc(JSON.stringify(p.team))+',\'goal\','+p.goalIndex+')">Tip gol</button><button style="margin-top:5px" onclick="saveLivePick('+esc(JSON.stringify(String(p.fixtureId||liveFixtureId)))+','+esc(JSON.stringify(p.name))+','+esc(JSON.stringify(p.team))+',\'ga\','+p.gaIndex+')">Tip G+A</button></div></article>').join('');
 }
 function saveLivePick(fixtureId,name,team,market,index){
  const p={id:'live_'+Date.now(),playerId:'live_'+fixtureId+'_'+name,name,team,match:'Partita ID '+fixtureId,matchDate:new Date().toISOString().slice(0,10),market,prob:index,odd:null,date:new Date().toLocaleDateString('it-IT'),createdAt:new Date().toISOString(),result:'pending',source:'PitchAPI — statistiche recenti'};
