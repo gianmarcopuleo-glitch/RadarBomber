@@ -63,11 +63,13 @@ const isRecognizedCup = n =>
 const canonicalLeague = name => {
   const n = normalize(name);
   if (isExcludedLeague(n)) return null;
-  if (LEAGUE_ALIASES[n]) return LEAGUE_ALIASES[n];
-  // Accetta le principali coppe nazionali non elencate singolarmente nel catalogo,
-  // evitando competizioni femminili, giovanili e squadre riserve.
-  if (isRecognizedCup(n)) return n;
-  return null;
+  const canonical = LEAGUE_ALIASES[n] || null;
+  // Whitelist rigorosa: solo le competizioni esplicitamente elencate in
+  // LEAGUE_PRIORITY. Evita coppe minori e campionati non richiesti che il
+  // vecchio controllo accettava genericamente perché contenevano "cup".
+  if (!canonical) return null;
+  const priorityKeys = LEAGUE_PRIORITY.map(normalize);
+  return priorityKeys.includes(normalize(canonical)) ? canonical : null;
 };
 const allowed = name => canonicalLeague(name) !== null;
 const DOMESTIC_COUNTRY = {
