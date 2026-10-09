@@ -1,0 +1,8 @@
+{
+  "name": "radarbomber",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "node -e \"console.log('RadarBomber static site: no compilation required')\""
+  }
+}
