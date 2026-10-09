@@ -55,11 +55,11 @@ const EXCLUDED_LEAGUE_NAMES = new Set([
 ].map(normalize));
 const isExcludedLeague = n => !n ||
   EXCLUDED_LEAGUE_NAMES.has(n) ||
-  /^(serie b|ligue 2|championship|segunda division|2 bundesliga|liga portugal 2|eerste divisie)( |$)/.test(n) ||
-  /\\b(women|womens|ladies|feminine|femenina|femenino|u ?(17|18|19|20|21|23)|youth|reserve|reserves|primavera|development league)\\b/.test(n);
+  /^(serie b|ligue 2|championship|segunda division|2 bundesliga|liga portugal 2|eerste divisie|ecuador)( |$)/.test(n) ||
+  /\b(women|womens|ladies|feminine|femenina|femenino|u ?(17|18|19|20|21|23)|youth|reserve|reserves|primavera|development league|serie b|liga pro ecuador|liga pro|liga ecuabet)\b/.test(n);
 const isRecognizedCup = n =>
-  /\\b(cup|copa|coppa|coupe|pokal|beker|taça|taca|supercup|super cup|league cup|fa cup|knvb|dfb pokal|copa del rey|copa do brasil|coppa italia|coupe de france|copa argentina|scottish cup)\\b/.test(n) &&
-  !isExcludedLeague(n);
+  /\b(cup|copa|coppa|coupe|pokal|beker|taça|taca|supercup|super cup|league cup|fa cup|knvb|dfb pokal|copa del rey|copa do brasil|coppa italia|coupe de france|copa argentina|scottish cup)\b/.test(n) &&
+  !isExcludedLeague(n) && !/ecuador|liga pro/.test(n);
 const canonicalLeague = name => {
   const n = normalize(name);
   if (isExcludedLeague(n)) return null;
@@ -100,6 +100,12 @@ const DOMESTIC_COUNTRY = {
 };
 const allowedLeague = league => {
   if (!league) return false;
+  const leagueName = normalize(league.name || '');
+  const leagueCountry = normalize(league.country || '');
+  const leagueCountryCode = normalize(league.country_code || '');
+  // Esclusione esplicita: niente campionati/coppe dell'Ecuador né seconde divisioni.
+  if (leagueCountry === 'ecuador' || leagueCountryCode === 'ecu' ||
+      /\b(ecuador|liga pro|serie b|segunda division|ligue 2|2 bundesliga|championship|eerste divisie)\b/.test(leagueName)) return false;
   const canonical = canonicalLeague(league.name);
   if (!canonical) return false;
   const expected = DOMESTIC_COUNTRY[canonical];
