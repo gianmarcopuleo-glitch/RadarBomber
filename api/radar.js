@@ -1,4 +1,4 @@
-// RadarBomber: API-Football for fixtures, football-data.org for current-season player scorers. Keep both tokens in Vercel Environment Variables.
+// RadarBomber uses API-Football fixtures and recent goal/assist events. Keep API_FOOTBALL_KEY in Vercel Environment Variables.
 const BASE = 'https://v3.football.api-sports.io';
 // Keep the radar focused on major European leagues and continental competitions.
 const ALLOWED_LEAGUES = new Set([39, 140, 135, 78, 61, 2, 3, 848, 45, 143, 94, 88]);
@@ -43,14 +43,6 @@ function indexFromRecent(goals, assists, games, kind) {
   return Math.max(0, Math.min(99, Math.round(score)));
 }
 
-function indexFor(goals, assists, minutes, apps, kind) {
-  if (!apps || !minutes) return 0;
-  const per90Goal = goals / Math.max(minutes / 90, 1);
-  const per90GA = (goals + assists) / Math.max(minutes / 90, 1);
-  const base = kind === 'goal' ? per90Goal : per90GA;
-  const score = 100 * (1 - Math.exp(-base * (kind === 'goal' ? 1.35 : 1.0))) * Math.min(1, apps / 4);
-  return Math.max(0, Math.min(99, Math.round(score)));
-}
 
 module.exports = async function handler(req, res) {
   try {
