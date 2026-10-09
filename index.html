@@ -47,7 +47,7 @@ const demo=[
 ];
 function load(){try{let x=JSON.parse(localStorage.getItem(KEY));if(x&&Array.isArray(x.players))return x}catch(e){}return{players:[],odds:[],picks:[]}}
 const competitionOptions=['Serie A','Serie B','Premier League','Championship','La Liga','Segunda División','Bundesliga','2. Bundesliga','Ligue 1','Ligue 2','Primeira Liga','Eredivisie','MLS','Saudi Pro League','Brasileirão','Liga Profesional Argentina','Coppa Italia','FA Cup','Copa del Rey','DFB-Pokal','Coupe de France','Taça de Portugal','Champions League','Europa League','Conference League','Supercoppa UEFA','Copa Libertadores','Copa Sudamericana','Nations League','Qualificazioni Europei','Qualificazioni Mondiali UEFA','Qualificazioni Mondiali CONMEBOL','Qualificazioni Mondiali CAF','Qualificazioni Mondiali AFC','Qualificazioni Mondiali CONCACAF','Europei','Mondiali','Coppa d’Africa','Coppa America','Olimpiadi'];
-let s=load(),kind='goal',livePlayersData=[],liveFixtureId=null,liveSort='goal';
+let s=load(),kind='goal',livePlayersData=[],liveFixtureId=null,liveSort='goal',liveAnalysisMessage='';
 function save(){localStorage.setItem(KEY,JSON.stringify(s));render()}
 function esc(x){return String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function best(id,m){return s.odds.filter(o=>o.playerId===id&&o.market===m).sort((a,b)=>b.value-a.value)[0]}
