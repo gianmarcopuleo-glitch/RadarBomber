@@ -102,31 +102,47 @@ module.exports = async function handler(req, res) {
       try { return { data: await api(path), error: '' }; }
       catch (e) { return { data: [], error: e.message || 'Errore provider' }; }
     };
+    // Player statistics may be limited to older seasons on the Free plan.
+    // Try the fixture season first, then explicitly fall back only to seasons the provider says are accessible.
+    const loadTeamPlayers = async (teamId, leagueId, requestedSeason) => {
+      const seasonsToTry = [requestedSeason, 2024, 2023, 2022].filter((v, i, a) => a.indexOf(v) === i);
+      let lastError = '';
+      for (const statsSeason of seasonsToTry) {
+        let result = await optional('/players?team=' + teamId + '&season=' + statsSeason + '&league=' + leagueId + '&page=1');
+        if (!result.error && result.data.length) return { ...result, season: statsSeason };
+        if (result.error) {
+          lastError = result.error;
+          if (!/Free plans do not have access to this season|do not have access to this season/i.test(result.error)) {
+            return { ...result, season: statsSeason };
+          }
+        }
+        // If the league-filtered query is empty, try team+season without league.
+        if (!result.error && !result.data.length) {
+          const broad = await optional('/players?team=' + teamId + '&season=' + statsSeason + '&page=1');
+          if (!broad.error && broad.data.length) return { ...broad, season: statsSeason };
+          if (broad.error) lastError = broad.error;
+        }
+      }
+      return { data: [], error: lastError || 'Nessuna statistica disponibile nelle stagioni accessibili', season: null };
+    };
     const [lineupResult, homeResult, awayResult, injuryResult] = await Promise.all([
       optional('/fixtures/lineups?fixture=' + fixtureId),
-      optional('/players?team=' + fixture.teams.home.id + '&season=' + season + '&league=' + fixture.league.id + '&page=1'),
-      optional('/players?team=' + fixture.teams.away.id + '&season=' + season + '&league=' + fixture.league.id + '&page=1'),
+      loadTeamPlayers(fixture.teams.home.id, fixture.league.id, season),
+      loadTeamPlayers(fixture.teams.away.id, fixture.league.id, season),
       optional('/injuries?fixture=' + fixtureId)
     ]);
-    let lineups = lineupResult.data;
-    let homePlayers = homeResult.data;
-    let awayPlayers = awayResult.data;
+    const lineups = lineupResult.data;
+    const homePlayers = homeResult.data;
+    const awayPlayers = awayResult.data;
     const diagnostics = [];
+    const usedSeasons = [homeResult.season, awayResult.season].filter(Boolean);
     if (homeResult.error) diagnostics.push('Statistiche ' + fixture.teams.home.name + ': ' + homeResult.error);
     if (awayResult.error) diagnostics.push('Statistiche ' + fixture.teams.away.name + ': ' + awayResult.error);
+    if (usedSeasons.some(y => y !== season)) {
+      diagnostics.push('ATTENZIONE: piano gratuito; statistiche storiche stagione ' + [...new Set(usedSeasons)].join(' e ') + ', non dati aggiornati della stagione corrente.');
+    }
     if (lineupResult.error) diagnostics.push('Formazioni non disponibili: ' + lineupResult.error);
     if (injuryResult.error) diagnostics.push('Infortuni non disponibili: ' + injuryResult.error);
-    // If a team+league query returns no rows, retry once using team+season only.
-    if (!homePlayers.length && !homeResult.error) {
-      const fallback = await optional('/players?team=' + fixture.teams.home.id + '&season=' + season + '&page=1');
-      homePlayers = fallback.data;
-      if (fallback.error) diagnostics.push('Recupero rosa ' + fixture.teams.home.name + ': ' + fallback.error);
-    }
-    if (!awayPlayers.length && !awayResult.error) {
-      const fallback = await optional('/players?team=' + fixture.teams.away.id + '&season=' + season + '&page=1');
-      awayPlayers = fallback.data;
-      if (fallback.error) diagnostics.push('Recupero rosa ' + fixture.teams.away.name + ': ' + fallback.error);
-    }
     const injuries = injuryResult.data;
     const lineupKnown = lineups.length > 0;
     const starters = new Set(lineups.flatMap(t => (t.startXI || []).map(p => String(p.player && p.player.id))));
@@ -148,7 +164,7 @@ module.exports = async function handler(req, res) {
         if (!p.name || minutes < 90 || (lineupKnown && starters.size > 0 && !starters.has(id)) || injured.has(id)) continue;
         players.push({
           name: p.name, team: group.team, position: st.games && st.games.position || '',
-          goals, assists, minutes, starter: starters.has(id), lineupKnown,
+          goals, assists, minutes, statsSeason: (group.team === fixture.teams.home.name ? homeResult.season : awayResult.season), starter: starters.has(id), lineupKnown,
           injured: injured.has(id),
           goalIndex: indexFor(goals, assists, minutes, apps, 'goal'),
           gaIndex: indexFor(goals, assists, minutes, apps, 'ga')
