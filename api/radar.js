@@ -240,7 +240,7 @@ module.exports = async function handler(req, res) {
       }else if(!eventsWithBothPrices){
         message='Gli eventi sono stati abbinati, ma mancano quote 1X2 complete per casa e trasferta. Verifica la copertura della competizione nel piano The Odds API.';
       }else{
-        message='Quote trovate, ma nessuna favorita rispetta le soglie: casa ≤2,00 oppure trasferta ≤2,00. Le soglie restano invariate; prova un’altra data.';
+        message='Quote trovate, ma nessuna favorita ha una quota inferiore o uguale a 2,00. Prova un’altra data.';
       }
       res.setHeader('Cache-Control','s-maxage=60, stale-while-revalidate=60');
       return res.status(200).json({date,mode:'pitchapi',message,totalFixturesFromProvider:matches.length,filteredFixtures:fixtures.length,diagnostics,fixtures});
