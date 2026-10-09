@@ -111,8 +111,8 @@ function getEventPrices(event) {
   const homeOdds=median(home),awayOdds=median(away);
   let favorite=null;
   if(homeOdds!=null && awayOdds!=null) {
-    if(homeOdds<awayOdds && homeOdds<=1.65)favorite='home';
-    else if(awayOdds<homeOdds && awayOdds<=1.55)favorite='away';
+    if(homeOdds<awayOdds && homeOdds<=2.00)favorite='home';
+    else if(awayOdds<homeOdds && awayOdds<=2.00)favorite='away';
   }
   return {homeOdds,awayOdds,favorite,bookmakersCount:Math.min(home.length,away.length)};
 }
@@ -228,7 +228,7 @@ module.exports = async function handler(req, res) {
       const diagnostics={date,providerFixtures:matches.length,eligibleFixtures:eligibleMatches.length,sportsRequested:sportKeys.length,sportsWithOddsData:oddsBySport.size,matchedOddsEvents,eventsWithBothPrices,qualifyingFixtures:fixtures.length,oddsErrors};
       let message;
       if(fixtures.length){
-        message='Partite filtrate per competizioni di prima fascia e quote mediane 1X2: favorita casa ≤1,65 oppure favorita ospite ≤1,55. Le quote provengono da The Odds API.';
+        message='Partite filtrate per competizioni di prima fascia e quote mediane 1X2: favorita casa ≤2,00 oppure favorita ospite ≤2,00. Le quote provengono da The Odds API.';
         if(oddsErrors.length)message+=' Attenzione: alcune competizioni non hanno restituito quote ('+oddsErrors.map(e=>e.sportKey).join(', ')+').';
       }else if(!eligibleMatches.length){
         message='Nessuna partita delle competizioni selezionate risulta disponibile su PitchAPI per questa data. Prova un altro giorno.';
@@ -240,7 +240,7 @@ module.exports = async function handler(req, res) {
       }else if(!eventsWithBothPrices){
         message='Gli eventi sono stati abbinati, ma mancano quote 1X2 complete per casa e trasferta. Verifica la copertura della competizione nel piano The Odds API.';
       }else{
-        message='Quote trovate, ma nessuna favorita rispetta le soglie: casa ≤1,65 oppure trasferta ≤1,55. Le soglie restano invariate; prova un’altra data.';
+        message='Quote trovate, ma nessuna favorita rispetta le soglie: casa ≤2,00 oppure trasferta ≤2,00. Le soglie restano invariate; prova un’altra data.';
       }
       res.setHeader('Cache-Control','s-maxage=60, stale-while-revalidate=60');
       return res.status(200).json({date,mode:'pitchapi',message,totalFixturesFromProvider:matches.length,filteredFixtures:fixtures.length,diagnostics,fixtures});
@@ -252,7 +252,7 @@ module.exports = async function handler(req, res) {
     if (!fixture || !fixture.id) return res.status(404).json({error:'Partita non trovata su PitchAPI.'});
     if (!allowedLeague(fixture.league)) return res.status(403).json({error:'Competizione esclusa: sono ammesse solo le competizioni principali selezionate.'});
     const prices = await oddsForFixture(fixture);
-    if (!prices || !prices.favorite) return res.status(200).json({message:'Partita esclusa: non sono disponibili quote 1X2 che rispettino le soglie previste.',players:[],odds:null});
+    if (!prices || !prices.favorite) return res.status(200).json({message:'Partita esclusa: non sono disponibili quote 1X2 con favorita a quota ≤2,00.',players:[],odds:null});
     const home = fixture.home_team || {};
     const away = fixture.away_team || {};
     const homeId = String(home.id || '');
@@ -385,7 +385,7 @@ module.exports = async function handler(req, res) {
     if (!uniqueMatches.length) diagnostics.push('Non sono state trovate partite concluse recenti per entrambe le squadre nei campionati coperti.');
     diagnostics.push('Fonte: PitchAPI. Indici comparativi derivati da gol e assist nelle partite recenti; non sono probabilità calibrate. La formazione viene aggiornata dal provider e può cambiare fino alla pubblicazione ufficiale.');
     const message = players.length
-      ? 'Quote mediane 1X2: casa '+prices.homeOdds+' · trasferta '+prices.awayOdds+'. Favorita selezionata: '+(prices.favorite==='home'?'squadra di casa':'squadra ospite')+'. '+(lineupConfirmed
+      ? 'Quote mediane 1X2 (soglia favorita ≤2,00): casa '+prices.homeOdds+' · trasferta '+prices.awayOdds+'. Favorita selezionata: '+(prices.favorite==='home'?'squadra di casa':'squadra ospite')+'. '+(lineupConfirmed
           ? 'Formazione ufficiale pubblicata: elenco limitato ai titolari ufficiali.'
           : 'Formazione probabile: elenco provvisorio dei titolari previsti, aggiornabile quando PitchAPI pubblica gli undici ufficiali.') + ' ' + diagnostics.join(' | ')
       : !lineupAvailable
