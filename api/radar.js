@@ -427,7 +427,8 @@ module.exports = async function handler(req, res) {
               lineupPlayersById.set(playerId, {
                 name: p.name || '',
                 teamId,
-                shirtNumber: p.shirt_number || ''
+                shirtNumber: p.shirt_number || '',
+                positionId: p.position_id
               });
             }
           }
@@ -524,7 +525,7 @@ module.exports = async function handler(req, res) {
         return ids.includes(teamId) && m.id !== fixtureId && Number.isFinite(matchMs) && matchMs >= earliestMs && matchMs < targetMs && finished;
       })
       .sort((a,b) => String(b.date || '').localeCompare(String(a.date || '')))
-      .slice(0,5);
+      .slice(0,8);
     const homeRecent = recentFor(homeId);
     const awayRecent = recentFor(awayId);
     const gamesByTeam = new Map([[homeId,homeRecent.length],[awayId,awayRecent.length]]);
@@ -608,10 +609,33 @@ module.exports = async function handler(req, res) {
       }
     }
 
+    // Aggiungiamo i titolari della formazione corrente anche quando non compaiono
+    // nei dati offensivi delle ultime gare: non devono sparire solo perché hanno
+    // avuto poche occasioni o sono rientrati da un infortunio.
+    for (const [playerId, official] of lineupPlayersById) {
+      const key=official.teamId+':'+String(playerId);
+      if (playersByKey.has(key) || positionName(official.positionId)==='Portiere') continue;
+      playersByKey.set(key,{
+        id:String(playerId),name:official.name||'Giocatore',team:official.teamId===homeId?home.name:away.name,
+        teamId:official.teamId,position:positionName(official.positionId),goals:0,assists:0,appearances:0,minutes:0,
+        statsShots:0,statsShotsOnTarget:0,statsXg:0,shots:0,shotsOnTarget:0,xg:0,keyPasses:0,
+        statsSeason:'nessuna statistica recente disponibile',source:'PitchAPI lineup; statistiche recenti non disponibili',
+        starter:true,lineupKnown:true,lineupConfirmed,lineupType,injured:false,
+        _appearanceMatches:new Set(),_shotMatches:new Set()
+      });
+    }
+    const samePlayerName=(a,b)=>{
+      const x=normalize(a),y=normalize(b);
+      if(!x||!y)return false;
+      if(x===y||x.includes(y)||y.includes(x))return true;
+      const xt=x.split(' ').filter(Boolean),yt=y.split(' ').filter(Boolean);
+      return xt.length>0&&yt.length>0&&xt[xt.length-1]===yt[yt.length-1]&&xt[xt.length-1].length>=4;
+    };
     const players = [...playersByKey.values()]
-      .filter(p=>(!lineupAvailable || lineupPlayerIds.has(String(p.id))) && (p.goals>0||p.assists>0||p.shots>0||p.xg>0))
+      .filter(p=>p.position!=='Portiere' && (p.position==='Attaccante'||p.position==='Centrocampista'||p.goals>0||p.assists>0||p.shots>0||p.xg>0||p.statsShots>0||p.keyPasses>0))
       .map(p=>{
-        const officialSource=lineupPlayersById.get(String(p.id));
+        const officialSource=lineupPlayersById.get(String(p.id)) || [...lineupPlayersById.values()].find(o=>o.teamId===p.teamId&&samePlayerName(o.name,p.name));
+        const isCurrentStarter=Boolean(officialSource);
         const shotDataAvailable=p.shots>0;
         const shots=shotDataAvailable?p.shots:p.statsShots;
         const shotsOnTarget=shotDataAvailable?p.shotsOnTarget:p.statsShotsOnTarget;
@@ -713,24 +737,28 @@ module.exports = async function handler(req, res) {
         ));
         const goalProbability=poissonPercent(goalBaseRate*expectedMinutes/90*contextFactor*combinedGoalFactor);
         const gaProbability=poissonPercent(gaBaseRate*expectedMinutes/90*contextFactor*combinedGaFactor);
+        const participationFactor=!lineupAvailable?1:(isCurrentStarter?1:0.45);
+        const gaParticipationFactor=!lineupAvailable?1:(isCurrentStarter?1:0.55);
+        const adjustedGoalProbability=poissonPercent(goalBaseRate*expectedMinutes/90*contextFactor*combinedGoalFactor*participationFactor);
+        const adjustedGaProbability=poissonPercent(gaBaseRate*expectedMinutes/90*contextFactor*combinedGaFactor*gaParticipationFactor);
         const confidenceScore=Math.round(Math.min(100,
-          20+Math.min(5,appearances)*8+(lineupConfirmed?25:lineupAvailable?10:0)+
+          20+Math.min(5,appearances)*8+(lineupAvailable&&isCurrentStarter?(lineupConfirmed?25:10):0)+
           (p.minutes>0?10:0)+(shotDataAvailable||p.statsXg>0?17:0)+(shotsOnTarget>0?8:0)
         ));
-        const eligibleForBet=Boolean((lineupConfirmed||lineupAvailable) && appearances>=2 && confidenceScore>=55 && (shotDataAvailable||p.statsXg>0||p.statsShots>0));
+        const eligibleForBet=Boolean((lineupConfirmed||lineupAvailable) && (!lineupAvailable||isCurrentStarter) && appearances>=2 && confidenceScore>=55 && (shotDataAvailable||p.statsXg>0||p.statsShots>0));
         return {...p,
           name:officialSource&&officialSource.name||p.name,
           team:p.teamId===homeId?home.name:away.name,
           shirtNumber:officialSource&&officialSource.shirtNumber||'',
-          starter:lineupAvailable&&lineupPlayerIds.has(String(p.id)),lineupKnown:lineupAvailable,lineupConfirmed,lineupType,
+          starter:lineupAvailable&&isCurrentStarter,lineupKnown:lineupAvailable,lineupConfirmed,lineupType,
           recentMatches:p.appearances,
           goalsPer90:Number(goalsPer90.toFixed(2)),assistsPer90:Number(assistsPer90.toFixed(2)),
           shots:Number(shots.toFixed(1)),shotsOnTarget:Number(shotsOnTarget.toFixed(1)),xg:Number(xg.toFixed(2)),
           minutes:Number(minutes.toFixed(0)),minutesEstimated:!(p.minutes>0),
           teamXgPerMatch:Number(attackMetric.toFixed(2)),opponentXgaPerMatch:Number(defenseMetric.toFixed(2)),
           goalComponents,gaComponents,goalIndex,gaIndex,matchOddsContext,headToHeadContext,venueFactor,penaltyContext,
-          goalProbability,gaProbability,confidenceScore,eligibleForBet,expectedMinutes,
-          probabilityModel:'poisson-shrunk-v2-h2h-home'
+          goalProbability:adjustedGoalProbability,gaProbability:adjustedGaProbability,confidenceScore,eligibleForBet,expectedMinutes,
+          probabilityModel:'poisson-shrunk-v4-expanded-candidates'
         };
       })
       .sort((a,b)=>Math.max(b.goalProbability||0,b.gaProbability||0)-Math.max(a.goalProbability||0,a.gaProbability||0) || Math.max(b.goalIndex,b.gaIndex)-Math.max(a.goalIndex,a.gaIndex));
@@ -743,12 +771,12 @@ module.exports = async function handler(req, res) {
       ? 'Analisi di entrambe le squadre con coefficiente casa/trasferta e precedenti diretti. '+(lineupConfirmed
           ? 'Formazione ufficiale pubblicata: sono mostrati i titolari ufficiali.'
           : lineupAvailable
-            ? 'Formazione probabile disponibile: i candidati sono limitati ai titolari previsti.'
+            ? 'Formazione disponibile: i titolari previsti sono favoriti; gli altri restano monitorabili ma non sono proposte giocabili.'
             : 'Formazione non ancora disponibile: candidati individuati dalle statistiche recenti, ma non confermati titolari.') + ' ' + diagnostics.join(' | ')
       : 'Nessun giocatore con gol o assist rilevati nelle ultime partite concluse disponibili per questa gara. ' + diagnostics.join(' | ');
     // L'analisi non va memorizzata a lungo: rose e formazioni possono cambiare.
     res.setHeader('Cache-Control','no-store, max-age=0');
-    return res.status(200).json({message,diagnostics,matchOdds:{available:oddsAvailable,homeOdds,awayOdds,favorite:matchOdds?.favorite||null,bookmakersCount:matchOdds?.bookmakersCount||0},headToHead:{matches:h2hMatches.length,playerStatsMatches:h2hPlayerResults.filter(r=>(r.players||[]).length>0).length,results:h2hMatches.map(m=>{const result=h2hPlayerResults.find(r=>String(r.match._matchId)===String(m._matchId));const scorerRows=(result&&result.players||[]).map(row=>({row,goals:getStat(row,'goals'),assists:getStat(row,'assists')})).filter(x=>x.goals>0);return {date:matchDateKey(m),home:m.home&&m.home.name||m.home_team&&m.home_team.name||'',away:m.away&&m.away.name||m.away_team&&m.away_team.name||'',scoreHome:m.score_home,scoreAway:m.score_away,playerStatsAvailable:Boolean(result&&(result.players||[]).length),scorers:scorerRows.map(x=>({name:x.row.player&&x.row.player.name||'Giocatore',team:String(x.row.team_id)===homeId?home.name:away.name,goals:x.goals,assists:x.assists}))};})},model:'poisson-shrunk-v3-penalty-h2h-home',weights:{goal:{recentGoals:14,xG:18,shots:13,shotsOnTarget:8,finishing:5,teamAttack:6,opponentDefense:6,homeAdvantage:8,minutes:3,matchOdds:5,headToHead:10,designatedPenaltyTaker:4},goalAssist:{goalContributions:13,xG:16,shots:11,shotsOnTarget:8,assists:12,chanceCreation:7,teamAttack:5,opponentDefense:6,homeAdvantage:8,minutes:2,matchOdds:4,headToHead:8}},teamContext:{home:teamForm.get(homeId),away:teamForm.get(awayId)},players:players.slice(0,24)});
+    return res.status(200).json({message,diagnostics,matchOdds:{available:oddsAvailable,homeOdds,awayOdds,favorite:matchOdds?.favorite||null,bookmakersCount:matchOdds?.bookmakersCount||0},headToHead:{matches:h2hMatches.length,playerStatsMatches:h2hPlayerResults.filter(r=>(r.players||[]).length>0).length,results:h2hMatches.map(m=>{const result=h2hPlayerResults.find(r=>String(r.match._matchId)===String(m._matchId));const scorerRows=(result&&result.players||[]).map(row=>({row,goals:getStat(row,'goals'),assists:getStat(row,'assists')})).filter(x=>x.goals>0);return {date:matchDateKey(m),home:m.home&&m.home.name||m.home_team&&m.home_team.name||'',away:m.away&&m.away.name||m.away_team&&m.away_team.name||'',scoreHome:m.score_home,scoreAway:m.score_away,playerStatsAvailable:Boolean(result&&(result.players||[]).length),scorers:scorerRows.map(x=>({name:x.row.player&&x.row.player.name||'Giocatore',team:String(x.row.team_id)===homeId?home.name:away.name,goals:x.goals,assists:x.assists}))};})},model:'poisson-shrunk-v3-penalty-h2h-home',weights:{goal:{recentGoals:14,xG:18,shots:13,shotsOnTarget:8,finishing:5,teamAttack:6,opponentDefense:6,homeAdvantage:8,minutes:3,matchOdds:5,headToHead:10,designatedPenaltyTaker:4},goalAssist:{goalContributions:13,xG:16,shots:11,shotsOnTarget:8,assists:12,chanceCreation:7,teamAttack:5,opponentDefense:6,homeAdvantage:8,minutes:2,matchOdds:4,headToHead:8}},teamContext:{home:teamForm.get(homeId),away:teamForm.get(awayId)},players:players.slice(0,40)});
   } catch (error) {
     res.setHeader('Cache-Control','no-store, max-age=0');
     const status = error.status || 502;
