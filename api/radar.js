@@ -110,6 +110,7 @@ module.exports = async function handler(req, res) {
     // gli undici ufficiali. In entrambi i casi consideriamo SOLO gli starter,
     // mai panchinari o giocatori ricavati da vecchie statistiche.
     let lineupPlayerIds = new Set();
+    const lineupPlayersById = new Map();
     let lineupAvailable = false;
     let lineupConfirmed = false;
     let lineupType = '';
@@ -121,8 +122,18 @@ module.exports = async function handler(req, res) {
       const homeStarters = lineupData.home && Array.isArray(lineupData.home.starters) ? lineupData.home.starters : [];
       const awayStarters = lineupData.away && Array.isArray(lineupData.away.starters) ? lineupData.away.starters : [];
       if (lineupTeamsMatch && homeStarters.length && awayStarters.length) {
-        for (const p of [...homeStarters, ...awayStarters]) {
-          if (p && p.player_id) lineupPlayerIds.add(String(p.player_id));
+        for (const [side, teamId] of [[homeStarters, homeId], [awayStarters, awayId]]) {
+          for (const p of side) {
+            if (p && p.player_id) {
+              const playerId = String(p.player_id);
+              lineupPlayerIds.add(playerId);
+              lineupPlayersById.set(playerId, {
+                name: p.name || '',
+                teamId,
+                shirtNumber: p.shirt_number || ''
+              });
+            }
+          }
         }
         lineupAvailable = lineupPlayerIds.size > 0;
         lineupConfirmed = lineupData.home.confirmed === true && lineupData.away.confirmed === true;
@@ -194,11 +205,16 @@ module.exports = async function handler(req, res) {
       // potrebbero appartenere a rose precedenti. Quando è disponibile, la formazione
       // è l'unica lista autorizzata per questa partita.
       .filter(p=>lineupAvailable && lineupPlayerIds.has(String(p.id)) && (p.goals>0||p.assists>0))
-      .map(p=>({...p,
+      .map(p=>{
+        const officialSource = lineupPlayersById.get(String(p.id));
+        return {...p,
+        name: officialSource && officialSource.name || p.name,
+        team: p.teamId===homeId?home.name:away.name,
+        shirtNumber: officialSource && officialSource.shirtNumber || '',
         starter:true,lineupKnown:true,lineupConfirmed,lineupType,
         goalIndex:indexFromRecent(p.goals,p.assists,Math.max(1,p.recentMatches),'goal'),
         gaIndex:indexFromRecent(p.goals,p.assists,Math.max(1,p.recentMatches),'ga')
-      }))
+      };})
       .sort((a,b)=>Math.max(b.goalIndex,b.gaIndex)-Math.max(a.goalIndex,a.gaIndex));
     const diagnostics = [];
     if (homeRecent.length<3 || awayRecent.length<3) diagnostics.push('Campione recente incompleto: ultime gare trovate casa='+homeRecent.length+', ospite='+awayRecent.length+'.');
