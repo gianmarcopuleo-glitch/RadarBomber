@@ -144,7 +144,7 @@ function renderLivePlayers(){
  // mostriamo comunque i migliori candidati della sola squadra favorita,
  // distinguendoli dalle proposte che superano i requisiti statistici.
  const source=qualified.length?qualified:livePlayersData;
- const ranked=source.slice().sort((a,b)=>liveSort==='ga'?b.gaProbability-a.gaProbability:liveSort==='goal'?b.goalProbability-a.goalProbability:Math.max(b.goalProbability,b.gaProbability)-Math.max(a.goalProbability,a.goalProbability));
+ const ranked=source.slice().sort((a,b)=>liveSort==='ga'?b.gaProbability-a.gaProbability:liveSort==='goal'?b.goalProbability-a.goalProbability:Math.max(b.goalProbability,b.gaProbability)-Math.max(a.goalProbability,a.gaProbability));
  const isBatch=liveFixtureId===null;
  let list=ranked;
  if(isBatch){
