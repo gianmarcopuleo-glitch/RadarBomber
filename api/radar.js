@@ -117,16 +117,24 @@ module.exports = async function handler(req, res) {
       catch (e) { return { data: [], error: e.message || 'Errore provider' }; }
     };
 
-    // Work around the Free plan's season-statistics restriction without using old seasons:
-    // retrieve only the last three completed fixtures for each team and count goal/assist events.
+    // The Free plan rejects the "last" filter. Use a supported date window instead,
+    // then select the three most recent completed fixtures in that window.
+    const endDate = new Date();
+    const startDate = new Date(endDate.getTime() - 35 * 24 * 60 * 60 * 1000);
+    const isoDate = d => d.toISOString().slice(0, 10);
     const recentMatches = async teamId => {
-      const result = await optional('/fixtures?team=' + teamId + '&last=3');
+      const path = '/fixtures?team=' + teamId +
+        '&from=' + isoDate(startDate) + '&to=' + isoDate(endDate);
+      const result = await optional(path);
       if (result.error) diagnostics.push('Ultime partite squadra ' + teamId + ': ' + result.error);
-      return result.data.filter(f =>
-        Number(f.fixture && f.fixture.id) !== fixtureId &&
-        ['FT', 'AET', 'PEN'].includes(String(f.fixture && f.fixture.status && f.fixture.status.short || '')) &&
-        ALLOWED_LEAGUES.has(Number(f.league && f.league.id))
-      ).slice(-3);
+      return result.data
+        .filter(f =>
+          Number(f.fixture && f.fixture.id) !== fixtureId &&
+          ['FT', 'AET', 'PEN'].includes(String(f.fixture && f.fixture.status && f.fixture.status.short || '')) &&
+          ALLOWED_LEAGUES.has(Number(f.league && f.league.id))
+        )
+        .sort((a, b) => new Date(b.fixture.date) - new Date(a.fixture.date))
+        .slice(0, 3);
     };
 
     const [homeRecent, awayRecent] = await Promise.all([
