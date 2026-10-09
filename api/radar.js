@@ -1,13 +1,27 @@
 // RadarBomber — primary data source: PitchAPI (free plan, current fixtures and match player stats).
 const BASE = 'https://api.pitchapi.dev/v1';
-// Campionati richiesti dall'utente, con priorità ai cinque principali.
+// Competizioni richieste dall'utente. I nomi sono normalizzati per tollerare
+// differenze di accenti e punteggiatura restituite dal provider.
 const LEAGUE_PRIORITY = [
+  // Campionati nazionali prioritari
   'Serie A','Premier League','La Liga','Bundesliga','Ligue 1',
-  'Eredivisie','Primeira Liga','Liga Portugal','Super Lig','Süper Lig',
+  'Eredivisie','Primeira Liga','Liga Portugal','Saudi Pro League',
+  'Saudi Pro League Roshn Saudi League','Super Lig','Süper Lig',
   'Belgian Pro League','Jupiler Pro League',
+  // Coppe europee per club
   'UEFA Champions League','Champions League',
   'UEFA Europa League','Europa League',
-  'UEFA Conference League','Conference League'
+  'UEFA Conference League','Conference League',
+  // Competizioni internazionali per club
+  'Copa Libertadores','CONMEBOL Libertadores',
+  // Nazionali: tornei e qualificazioni
+  'UEFA Nations League','Nations League',
+  'European Championship','UEFA Euro','Europei',
+  'FIFA World Cup','World Cup','Mondiali',
+  'UEFA European Qualifiers','European Qualifiers',
+  'World Cup Qualification Europe','World Cup Qualifiers',
+  'FIFA World Cup qualification','World Cup Qualification',
+  'UEFA World Cup Qualifiers'
 ];
 const ALLOWED_LEAGUES = LEAGUE_PRIORITY;
 const normalize = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
