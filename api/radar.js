@@ -48,23 +48,36 @@ module.exports = async function handler(req, res) {
     }
 
     if (!req.query.fixture) {
-      const fixtures = req.query.date
-        ? await api('/fixtures?date=' + encodeURIComponent(date) + '&timezone=Europe%2FRome')
-        : await api('/fixtures?next=50&timezone=Europe%2FRome');
+      let fixtures = [];
+      let lookupMode = req.query.date ? 'date' : 'upcoming';
+      if (req.query.date) {
+        fixtures = await api('/fixtures?date=' + encodeURIComponent(date) + '&timezone=Europe%2FRome');
+      } else {
+        // First use API-Football's next-fixtures shortcut. Some plan/provider responses
+        // can return an empty list here, so retry with an explicit date range.
+        fixtures = await api('/fixtures?next=50&timezone=Europe%2FRome');
+        if (!fixtures.length) {
+          const end = new Date(date + 'T12:00:00Z');
+          end.setUTCDate(end.getUTCDate() + 14);
+          const to = end.toISOString().slice(0, 10);
+          fixtures = await api('/fixtures?from=' + encodeURIComponent(date) + '&to=' + encodeURIComponent(to) + '&timezone=Europe%2FRome');
+          lookupMode = 'date-range';
+        }
+      }
       const preferred = fixtures.filter(f => ALLOWED_LEAGUES.has(Number(f.league && f.league.id)));
       // If today's matches use competitions outside our preferred list, show the real fixtures anyway
       // instead of making the dashboard look broken or empty.
       const useFallback = preferred.length === 0 && fixtures.length > 0;
       const visible = (useFallback ? fixtures : preferred).slice(0, 100);
       const message = fixtures.length === 0
-        ? 'API-Football non ha restituito partite per questa richiesta. Verifica il piano/copertura API e riprova.'
+        ? 'API-Football non ha restituito partite né con la ricerca prossime partite né con l’intervallo di 14 giorni. La chiave è stata accettata, ma il piano/copertura API potrebbe non includere queste competizioni o date.'
         : useFallback
           ? 'Nessuna competizione preferita trovata: mostro le prossime partite reali disponibili.'
           : 'Prossime partite reali aggiornate. Seleziona “Analizza giocatori” per consultare le statistiche.';
       res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=60');
       res.status(200).json({
         date,
-        mode: req.query.date ? 'date' : 'upcoming',
+        mode: lookupMode,
         message,
         totalFixturesFromProvider: fixtures.length,
         usedFallback: useFallback,
