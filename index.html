@@ -62,7 +62,7 @@ async function refreshLive(){
   const data=await r.json();
   if(!r.ok)throw new Error(data.error||'Servizio temporaneamente non disponibile');
   status.textContent=data.message||('Aggiornato: '+new Date().toLocaleTimeString('it-IT')+'. Dati statistici da PitchAPI.');
-  out.innerHTML=(data.fixtures||[]).length?(data.fixtures||[]).map(f=>'<article class="player" style="grid-template-columns:1fr auto"><div><div class="name">'+esc(f.home)+' – '+esc(f.away)+'</div><div class="team">'+esc(f.league)+' · '+esc(f.time||'Orario non disponibile')+' · '+esc(f.status||'In programma')+'</div></div><div><button onclick="loadLivePlayers('+JSON.stringify(f.id)+')">Analizza giocatori</button></div></article>').join(''):'<div class="empty">'+esc(data.message||'Il provider non ha restituito partite per questa richiesta. Riprova tra poco.')+'</div>';
+  out.innerHTML=(data.fixtures||[]).length?(data.fixtures||[]).map(f=>'<article class="player" style="grid-template-columns:1fr auto"><div><div class="name">'+esc(f.home)+' – '+esc(f.away)+'</div><div class="team">'+esc(f.league)+' · '+esc(f.time||'Orario non disponibile')+' · '+esc(f.status||'In programma')+'</div></div><div><button data-fixture="'+esc(f.id)+'" onclick="loadLivePlayers(this.dataset.fixture)">Analizza giocatori</button></div></article>').join(''):'<div class="empty">'+esc(data.message||'Il provider non ha restituito partite per questa richiesta. Riprova tra poco.')+'</div>';
  }catch(e){status.textContent='Dati live non disponibili: '+e.message+'. Se la chiave API non è ancora configurata, segui i due passaggi indicati sotto.';out.innerHTML='<div class="empty">Nessun dato reale caricato. Non vengono mostrati consigli inventati.</div>'}
  finally{btn.disabled=false;btn.textContent='Aggiorna dati live'}
 }
