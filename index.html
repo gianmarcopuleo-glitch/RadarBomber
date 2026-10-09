@@ -9,7 +9,7 @@
 <nav class="tabs"><button class="active" data-tab="radar">Radar giocatori</button><button data-tab="odds">Quote</button><button data-tab="results">Storico tip</button><button data-tab="manage">Gestisci dati</button></nav>
 <section id="radar" class="pane"><section class="panel" id="livePanel">
 <div class="head"><div><h3>Radar reale — partite e giocatori</h3><div class="tiny">Dati dal provider calcistico. Le valutazioni sono indici statistici, non probabilità garantite. Le formazioni sono considerate confermate solo quando il provider le pubblica.</div></div><button id="refreshLive" class="primary">Aggiorna dati live</button></div>
-<div id="liveStatus" class="note">Per attivare i dati reali serve configurare una chiave API gratuita nelle impostazioni Vercel. Non inserire la chiave qui nell'app.</div>
+<div id="liveStatus" class="note">Per attivare i dati reali: 1) crea un account gratuito su API-Football (api-football.com); 2) in Vercel apri progetto 9844 → Settings → Environment Variables e crea API_FOOTBALL_KEY con la chiave come valore; 3) fai Redeploy. Non inviare la chiave in chat e non inserirla nell'app.</div>
 <div id="liveMatches" class="players"><div class="empty">Premi “Aggiorna dati live” per caricare le partite in programma.</div></div>
 </section>
 <div class="panel"><div class="head"><div><h3>Classifica giocatori</h3><div class="tiny">Sono mostrati solo profili non demo. Le partite e le statistiche live richiedono ancora una fonte dati collegata.</div></div><select id="sort" style="width:auto"><option value="goal">Ordina: prob. gol</option><option value="ga">Ordina: gol + assist</option><option value="form">Ordina: forma</option></select></div>
@@ -58,7 +58,7 @@ async function refreshLive(){
  if(!status||!out)return;
  btn.disabled=true;btn.textContent='Aggiornamento…';status.textContent='Controllo delle partite e delle formazioni…';
  try{
-  const r=await fetch('/api/radar?date='+new Date().toISOString().slice(0,10),{cache:'no-store'});
+  const r=await fetch('/api/radar',{cache:'no-store'});
   const data=await r.json();
   if(!r.ok)throw new Error(data.error||'Servizio temporaneamente non disponibile');
   status.textContent=data.message||('Aggiornato: '+new Date().toLocaleTimeString('it-IT')+'. Dati statistici da API-Football.');
