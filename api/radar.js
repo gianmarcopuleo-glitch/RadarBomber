@@ -119,7 +119,7 @@ const statAny = (player, keys) => {
   }
   return 0;
 };
-const weighted = parts => Math.round(parts.reduce((sum, [value, weight]) => sum + clamp(value) * weight, 0));
+const weighted = parts => Math.round(parts.reduce((sum, [value, weight]) => sum + clamp(value) * weight, 0) / 100);
 const ODDS_SPORT_BY_LEAGUE = {
   'serie a':'soccer_italy_serie_a',
   'premier league':'soccer_epl',
