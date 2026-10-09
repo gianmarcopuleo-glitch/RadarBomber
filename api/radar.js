@@ -14,7 +14,19 @@ const LEAGUE_PRIORITY = [
   'World Cup Qualification Europe','UEFA World Cup Qualifiers'
 ];
 const normalize = s => String(s || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-const allowed = name => LEAGUE_PRIORITY.some(x => normalize(x) === normalize(name));
+// Blocco esplicito delle seconde divisioni e dei campionati inferiori:
+ // protegge anche da alias o traduzioni restituiti dal provider.
+const EXCLUDED_LEAGUE_NAMES = new Set([
+  'serie b','ligue 2','championship','segunda division','2 bundesliga',
+  '2 bundesliga','segunda division portuguesa','liga portugal 2',
+  'serie b brasil','brasileirao serie b','segunda division argentina'
+].map(normalize));
+const allowed = name => {
+  const n = normalize(name);
+  if (!n || EXCLUDED_LEAGUE_NAMES.has(n)) return false;
+  if (/^(serie b|ligue 2|championship|segunda division|2 bundesliga)( |$)/.test(n)) return false;
+  return LEAGUE_PRIORITY.some(x => normalize(x) === n);
+};
 const DOMESTIC_COUNTRY = {
   'serie a': { names:['italy','italia'], codes:['ita','it'] },
   'premier league': { names:['england','inghilterra'], codes:['eng','gb-eng'] },
