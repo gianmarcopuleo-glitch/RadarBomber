@@ -224,10 +224,15 @@ module.exports = async function handler(req, res) {
     }
     diagnostics.push('Indici basati su gol e assist nelle ultime partite concluse delle squadre, non su statistiche stagionali. Formazioni, titolarità e infortuni non verificati.');
     players.sort((a, b) => Math.max(b.goalIndex, b.gaIndex) - Math.max(a.goalIndex, a.gaIndex));
-    const message = players.length
-      ? 'Radar forma recente: giocatori che hanno segnato o fornito assist nelle ultime partite delle due squadre. Indici comparativi, non probabilità calibrate. ' + diagnostics.join(' | ')
-      : 'Nessun giocatore con gol o assist rilevato nelle ultime partite disponibili. RadarBomber non usa nomi o statistiche di stagioni passate come se fossero attuali. ' +
-        (diagnostics.length ? 'Dettagli: ' + diagnostics.join(' | ') : 'Riprova più tardi.');
+    const currentSeasonBlocked = diagnostics.some(d =>
+      /Free plans do not have access to this season/i.test(d)
+    );
+    const message = currentSeasonBlocked
+      ? 'LIMITAZIONE DEL PIANO API: il piano gratuito di API-Football non consente di leggere la stagione corrente (' + seasonYear + '). Perciò RadarBomber non può verificare le ultime partite e calcolare in modo affidabile gli indici gol/assist con questa chiave. Non è un problema di caricamento dell’app e non verranno mostrati dati storici come attuali. Occorre usare un provider che includa i dati correnti oppure un piano API-Football che li consenta. Dettagli: ' + diagnostics.join(' | ')
+      : (players.length
+        ? 'Radar forma recente: giocatori che hanno segnato o fornito assist nelle ultime partite delle due squadre. Indici comparativi, non probabilità calibrate. ' + diagnostics.join(' | ')
+        : 'Nessun giocatore con gol o assist rilevato nelle ultime partite disponibili. RadarBomber non usa nomi o statistiche di stagioni passate come se fossero attuali. ' +
+          (diagnostics.length ? 'Dettagli: ' + diagnostics.join(' | ') : 'Riprova più tardi.'));
     const providerLimitError = diagnostics.some(d => /429|rate.?limit|too many requests|API-Football:/i.test(d));
     res.setHeader('Cache-Control', providerLimitError ? 'no-store, max-age=0' : (players.length ? 's-maxage=21600, stale-while-revalidate=86400' : 's-maxage=900, stale-while-revalidate=1800'));
     res.status(200).json({
