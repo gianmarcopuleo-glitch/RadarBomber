@@ -1,6 +1,17 @@
 // RadarBomber API proxy for API-Football. Keep API_FOOTBALL_KEY in Vercel Environment Variables.
 const BASE = 'https://v3.football.api-sports.io';
+// Keep the radar focused on major European leagues and continental competitions.
 const ALLOWED_LEAGUES = new Set([39, 140, 135, 78, 61, 2, 3, 848, 45, 143, 94, 88]);
+const EUROPEAN_CUPS = new Set([2, 3, 848]);
+const MAIN_TEAMS = new Set([
+  'arsenal','aston villa','chelsea','liverpool','manchester city','manchester united','newcastle united','tottenham hotspur',
+  'real madrid','barcelona','atletico madrid','athletic club','real sociedad','villarreal','sevilla',
+  'inter','internazionale','juventus','milan','napoli','roma','lazio','atalanta','fiorentina',
+  'bayern munich','borussia dortmund','bayer leverkusen','rb leipzig','eintracht frankfurt','vfb stuttgart',
+  'paris saint germain','psg','marseille','monaco','lyon','lille','nice',
+  'benfica','porto','sporting cp','ajax','psv','feyenoord'
+]);
+const normalizeTeam = value => String(value || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\\s+/g, ' ').trim();
 
 async function api(path) {
   const key = (process.env.API_FOOTBALL_KEY || '').trim();
@@ -55,23 +66,25 @@ module.exports = async function handler(req, res) {
       // The UI can request another date explicitly; avoid unsupported "next", "from", "to" and "timezone".
       fixtures = await api('/fixtures?date=' + encodeURIComponent(date)); 
       lookupMode = 'date';
-      const preferred = fixtures.filter(f => ALLOWED_LEAGUES.has(Number(f.league && f.league.id)));
-      // If today's matches use competitions outside our preferred list, show the real fixtures anyway
-      // instead of making the dashboard look broken or empty.
-      const useFallback = preferred.length === 0 && fixtures.length > 0;
-      const visible = (useFallback ? fixtures : preferred).slice(0, 100);
-      const message = fixtures.length === 0
-        ? 'API-Football non ha restituito partite per questa data. La chiave è stata accettata, ma il piano/copertura API potrebbe non includere queste competizioni o date.'
-        : useFallback
-          ? 'Nessuna competizione preferita trovata: mostro le prossime partite reali disponibili.'
-          : 'Prossime partite reali aggiornate. Seleziona “Analizza giocatori” per consultare le statistiche.';
+      const preferred = fixtures.filter(f => {
+        const leagueId = Number(f.league && f.league.id);
+        if (!ALLOWED_LEAGUES.has(leagueId)) return false;
+        // Continental cups are relevant by competition; domestic leagues/cups are curated around major clubs.
+        if (EUROPEAN_CUPS.has(leagueId)) return true;
+        return MAIN_TEAMS.has(normalizeTeam(f.teams && f.teams.home && f.teams.home.name)) ||
+          MAIN_TEAMS.has(normalizeTeam(f.teams && f.teams.away && f.teams.away.name));
+      });
+      const visible = preferred.slice(0, 60);
+      const message = visible.length
+        ? 'Radar selettivo: campionati principali e partite con almeno una squadra di primo piano. Le partite secondarie senza dati recenti verificabili vengono escluse.'
+        : 'Nessuna partita principale trovata per questa data. Non mostriamo competizioni o squadre fuori dai filtri selettivi.';
       res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=60');
       res.status(200).json({
         date,
         mode: lookupMode,
         message,
         totalFixturesFromProvider: fixtures.length,
-        usedFallback: useFallback,
+        filteredFixtures: preferred.length,
         fixtures: visible.map(f => ({
           id: f.fixture.id,
           home: f.teams.home.name,
@@ -102,37 +115,18 @@ module.exports = async function handler(req, res) {
       try { return { data: await api(path), error: '' }; }
       catch (e) { return { data: [], error: e.message || 'Errore provider' }; }
     };
-    // Player statistics may be limited to older seasons on the Free plan.
-    // Try the fixture season first, then explicitly fall back only to seasons the provider says are accessible.
+    // Never substitute old-season rosters for current matches: stale players are misleading.
+    // Make one current-season request per team to preserve the Free plan quota.
     const loadTeamPlayers = async (teamId, leagueId, requestedSeason) => {
-      const seasonsToTry = [requestedSeason, 2023, 2022].filter((v, i, a) => a.indexOf(v) === i);
-      let lastError = '';
-      for (const statsSeason of seasonsToTry) {
-        let result = await optional('/players?team=' + teamId + '&season=' + statsSeason + '&league=' + leagueId + '&page=1');
-        if (!result.error && result.data.length) return { ...result, season: statsSeason };
-        if (result.error) {
-          lastError = result.error;
-          if (!/Free plans do not have access to this season|do not have access to this season/i.test(result.error)) {
-            return { ...result, season: statsSeason };
-          }
-        }
-        // If the league-filtered query is empty, try team+season without league.
-        if (!result.error && !result.data.length) {
-          const broad = await optional('/players?team=' + teamId + '&season=' + statsSeason + '&page=1');
-          if (!broad.error && broad.data.length) return { ...broad, season: statsSeason };
-          if (broad.error) lastError = broad.error;
-        }
-      }
-      return { data: [], error: lastError || 'Nessuna statistica disponibile nelle stagioni accessibili', season: null };
+      const result = await optional('/players?team=' + teamId + '&season=' + requestedSeason + '&league=' + leagueId + '&page=1');
+      return { ...result, season: result.error ? null : requestedSeason };
     };
-    // Prioritize the free-plan accessible historical seasons to avoid wasting requests on the current season.
-    // Lineups and injuries are omitted from automatic analysis to stay within the 10-requests/minute limit.
-    const lineupResult = { data: [], error: 'Formazioni non richieste automaticamente per ridurre le chiamate API.' };
-    const injuryResult = { data: [], error: 'Infortuni non richiesti automaticamente per ridurre le chiamate API.' };
-    const freePlanSeason = Number(req.query.season) || 2024;
+    // Current-season player statistics only. Do not spend extra calls on optional lineups/injuries.
+    const lineupResult = { data: [], error: '' };
+    const injuryResult = { data: [], error: '' };
     const [homeResult, awayResult] = await Promise.all([
-      loadTeamPlayers(fixture.teams.home.id, fixture.league.id, freePlanSeason),
-      loadTeamPlayers(fixture.teams.away.id, fixture.league.id, freePlanSeason)
+      loadTeamPlayers(fixture.teams.home.id, fixture.league.id, season),
+      loadTeamPlayers(fixture.teams.away.id, fixture.league.id, season)
     ]);
     const lineups = lineupResult.data;
     const homePlayers = homeResult.data;
@@ -175,11 +169,10 @@ module.exports = async function handler(req, res) {
     }
     players.sort((a, b) => Math.max(b.goalIndex, b.gaIndex) - Math.max(a.goalIndex, a.gaIndex));
     const message = players.length
-      ? (lineupKnown ? 'Formazioni pubblicate dal provider.' : 'Formazioni non ancora pubblicate: elenco provvisorio.') +
-        ' Indici basati su statistiche stagionali; non sono probabilità calibrate.' +
-        (diagnostics.length ? ' Avviso provider: ' + diagnostics.join(' | ') : '')
-      : 'Il provider non ha restituito giocatori con statistiche stagionali sufficienti per questa partita.' +
-        (diagnostics.length ? ' Dettagli: ' + diagnostics.join(' | ') : ' Verifica che il piano API-Football includa le statistiche di questa competizione/stagione.');
+      ? 'Giocatori con statistiche della stagione corrente. Indici statistici comparativi, non probabilità calibrate.' +
+        (diagnostics.length ? ' Avviso: ' + diagnostics.join(' | ') : '')
+      : 'Nessun giocatore mostrato: mancano statistiche accessibili della stagione corrente. Per evitare nomi e rendimento obsoleti, RadarBomber non usa più rose/statistiche storiche.' +
+        (diagnostics.length ? ' Dettagli: ' + diagnostics.join(' | ') : ' Verifica la disponibilità della stagione corrente nel piano API-Football.');
     res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=60');
     res.status(200).json({
       message,
