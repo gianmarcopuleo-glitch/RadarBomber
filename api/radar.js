@@ -105,30 +105,29 @@ module.exports = async function handler(req, res) {
     const awayId = String(away.id || '');
     if (!homeId || !awayId) return res.status(502).json({error:'PitchAPI non ha restituito gli identificativi delle due squadre.'});
 
-    // Per evitare giocatori rimasti associati a una vecchia squadra, accettiamo solo
-    // gli ID presenti nella formazione prevista/confermata della partita selezionata.
+    // Usiamo la formazione aggiornata della partita: prima quella probabile,
+    // poi la stessa risposta passa a confirmed=true quando vengono pubblicati
+    // gli undici ufficiali. In entrambi i casi consideriamo SOLO gli starter,
+    // mai panchinari o giocatori ricavati da vecchie statistiche.
     let lineupPlayerIds = new Set();
     let lineupAvailable = false;
+    let lineupConfirmed = false;
+    let lineupType = '';
     try {
       const lineupData = await pitch('/matches/' + encodeURIComponent(fixtureId) + '/lineups');
-      // Le formazioni previste possono essere costruite dal provider usando
-      // l'ultimo undici disponibile e contenere giocatori ormai trasferiti.
-      // Accettiamo quindi solo formazioni CONFERMATE e riferite alle squadre
-      // esatte della partita selezionata.
       const lineupTeamsMatch =
         String(lineupData.home_team && lineupData.home_team.id || '') === homeId &&
         String(lineupData.away_team && lineupData.away_team.id || '') === awayId;
-      const lineupsConfirmed = lineupTeamsMatch &&
-        lineupData.home && lineupData.home.confirmed === true &&
-        lineupData.away && lineupData.away.confirmed === true;
-      if (lineupsConfirmed) {
-        for (const side of [lineupData.home, lineupData.away]) {
-          for (const p of [...(side && side.starters || []), ...(side && side.bench || [])]) {
-            if (p && p.player_id) lineupPlayerIds.add(String(p.player_id));
-          }
+      const homeStarters = lineupData.home && Array.isArray(lineupData.home.starters) ? lineupData.home.starters : [];
+      const awayStarters = lineupData.away && Array.isArray(lineupData.away.starters) ? lineupData.away.starters : [];
+      if (lineupTeamsMatch && homeStarters.length && awayStarters.length) {
+        for (const p of [...homeStarters, ...awayStarters]) {
+          if (p && p.player_id) lineupPlayerIds.add(String(p.player_id));
         }
+        lineupAvailable = lineupPlayerIds.size > 0;
+        lineupConfirmed = lineupData.home.confirmed === true && lineupData.away.confirmed === true;
+        lineupType = lineupConfirmed ? 'ufficiale' : 'probabile';
       }
-      lineupAvailable = lineupsConfirmed && lineupPlayerIds.size > 0;
     } catch {}
 
     // Get the current seasons for the supported leagues and search the most recent completed
@@ -183,7 +182,7 @@ module.exports = async function handler(req, res) {
         if (!playersByKey.has(key)) playersByKey.set(key, {
           id:String(player.id),name:player.name,team:teamId===homeId?home.name:away.name,teamId,
           position:positionName(player.position_id),goals:0,assists:0,recentMatches:gamesByTeam.get(teamId)||0,
-          statsSeason:'ultime 3 partite concluse',source:'PitchAPI player match stats',starter:false,lineupKnown:false,injured:false
+          statsSeason:'ultime 3 partite concluse',source:'PitchAPI player match stats',starter:false,lineupKnown:false,lineupConfirmed:false,lineupType:'',injured:false
         });
         const entry = playersByKey.get(key);
         entry.goals += getStat(p,'goals');
@@ -196,6 +195,7 @@ module.exports = async function handler(req, res) {
       // è l'unica lista autorizzata per questa partita.
       .filter(p=>lineupAvailable && lineupPlayerIds.has(String(p.id)) && (p.goals>0||p.assists>0))
       .map(p=>({...p,
+        starter:true,lineupKnown:true,lineupConfirmed,lineupType,
         goalIndex:indexFromRecent(p.goals,p.assists,Math.max(1,p.recentMatches),'goal'),
         gaIndex:indexFromRecent(p.goals,p.assists,Math.max(1,p.recentMatches),'ga')
       }))
@@ -203,12 +203,16 @@ module.exports = async function handler(req, res) {
     const diagnostics = [];
     if (homeRecent.length<3 || awayRecent.length<3) diagnostics.push('Campione recente incompleto: ultime gare trovate casa='+homeRecent.length+', ospite='+awayRecent.length+'.');
     if (!uniqueMatches.length) diagnostics.push('Non sono state trovate partite concluse recenti per entrambe le squadre nei campionati coperti.');
-    diagnostics.push('Fonte: PitchAPI. Indici comparativi derivati da gol e assist nelle partite recenti; non sono probabilità calibrate. Formazioni e infortuni non sono verificati.');
+    diagnostics.push('Fonte: PitchAPI. Indici comparativi derivati da gol e assist nelle partite recenti; non sono probabilità calibrate. La formazione viene aggiornata dal provider e può cambiare fino alla pubblicazione ufficiale.');
     const message = players.length
-      ? 'Radar forma recente: giocatori con gol o assist nelle ultime gare, verificati anche nella formazione prevista/confermata della partita selezionata. ' + diagnostics.join(' | ')
+      ? (lineupConfirmed
+          ? 'Formazione ufficiale pubblicata: elenco limitato ai titolari ufficiali.'
+          : 'Formazione probabile: elenco provvisorio dei titolari previsti, aggiornabile quando PitchAPI pubblica gli undici ufficiali.') + ' ' + diagnostics.join(' | ')
       : !lineupAvailable
-        ? 'Formazione confermata e verificata non ancora disponibile su PitchAPI. Le formazioni previste non vengono usate perché possono contenere giocatori di rose precedenti: la lista resta vuota finché la formazione ufficiale non è confermata.'
-        : 'Nessun giocatore della formazione pubblicata ha gol o assist rilevati nelle partite recenti disponibili. ' + diagnostics.join(' | ');
+        ? 'PitchAPI non ha ancora fornito una formazione utilizzabile per questa partita. Riprova più vicino al calcio d’inizio.'
+        : (lineupConfirmed
+          ? 'Nessun titolare ufficiale ha gol o assist rilevati nelle partite recenti disponibili. '
+          : 'Nessun titolare probabile ha gol o assist rilevati nelle partite recenti disponibili. ') + diagnostics.join(' | ');
     // L'analisi non va memorizzata a lungo: rose e formazioni possono cambiare.
     res.setHeader('Cache-Control','no-store, max-age=0');
     return res.status(200).json({message,diagnostics,players:players.slice(0,24)});
