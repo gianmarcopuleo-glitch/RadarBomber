@@ -295,6 +295,14 @@ module.exports = async function handler(req, res) {
     const fixture = await pitch('/matches/' + encodeURIComponent(fixtureId));
     if (!fixture || !fixture.id) return res.status(404).json({error:'Partita non trovata su PitchAPI.'});
     if (!allowedLeague(fixture.league)) return res.status(403).json({error:'Competizione esclusa: sono ammesse solo le competizioni principali selezionate.'});
+    // Quote 1X2: indicatore del mercato sulla forza della squadra, non una quota giocatore.
+    // Se il provider quote non è disponibile, l'analisi statistica continua senza bonus.
+    let matchOdds = null;
+    try { matchOdds = await oddsForFixture(fixture); } catch {}
+    const homeOdds = matchOdds && Number.isFinite(matchOdds.homeOdds) ? matchOdds.homeOdds : null;
+    const awayOdds = matchOdds && Number.isFinite(matchOdds.awayOdds) ? matchOdds.awayOdds : null;
+    const oddsAvailable = homeOdds !== null && awayOdds !== null;
+    const oddsSideScore = odds => odds == null ? 0 : odds <= 1.50 ? 92 : odds <= 1.75 ? 82 : odds <= 2.00 ? 72 : odds <= 2.50 ? 60 : odds <= 3.25 ? 45 : 30;
     const home = fixture.home_team || {};
     const away = fixture.away_team || {};
     const homeId = String(home.id || '');
@@ -501,15 +509,19 @@ module.exports = async function handler(req, res) {
           homeAdvantage:p.teamId===homeId?100:0,
           minutes:rateScore(minutes/Math.max(1,p.appearances),90)
         };
+        const teamOdds = p.teamId===homeId ? homeOdds : awayOdds;
+        const matchOddsScore = oddsAvailable ? oddsSideScore(teamOdds) : 0;
         const goalIndex=weighted([
-          [goalComponents.recentGoals,22],[goalComponents.expectedGoals,24],[goalComponents.shotVolume,18],
-          [goalComponents.shotsOnTarget,10],[goalComponents.finishing,8],[goalComponents.teamAttack,8],
-          [goalComponents.opponentDefense,6],[goalComponents.homeAdvantage,2],[goalComponents.minutes,2]
+          [goalComponents.recentGoals,20],[goalComponents.expectedGoals,22],[goalComponents.shotVolume,16],
+          [goalComponents.shotsOnTarget,10],[goalComponents.finishing,8],[goalComponents.teamAttack,6],
+          [goalComponents.opponentDefense,6],[goalComponents.homeAdvantage,2],[goalComponents.minutes,2],
+          [matchOddsScore,8]
         ]);
         const gaIndex=weighted([
-          [gaComponents.goalContributions,17],[gaComponents.expectedGoals,20],[gaComponents.shotVolume,15],
+          [gaComponents.goalContributions,15],[gaComponents.expectedGoals,18],[gaComponents.shotVolume,13],
           [gaComponents.shotsOnTarget,10],[gaComponents.assists,14],[gaComponents.chanceCreation,8],
-          [gaComponents.teamAttack,7],[gaComponents.opponentDefense,6],[gaComponents.homeAdvantage,2],[gaComponents.minutes,1]
+          [gaComponents.teamAttack,5],[gaComponents.opponentDefense,6],[gaComponents.homeAdvantage,2],[gaComponents.minutes,1],
+          [matchOddsScore,8]
         ]);
         // Probabilità evento: conversione Poisson da tassi individuali regolarizzati.
         // La regolarizzazione riduce l'effetto di campioni piccoli; non sostituisce una calibrazione storica.
@@ -523,13 +535,17 @@ module.exports = async function handler(req, res) {
           : 0.70*shrunkGoalRate+0.30*(shotsOnTarget>0?Math.min(0.45,onTargetPer90*0.18):0.08);
         const gaBaseRate=0.65*shrunkGaRate+0.22*shrunkXgRate+0.13*shrunkAssistRate;
         const contextFactor=contextMultiplier(attackMetric,defenseMetric);
+        // Bonus modéré des cotes 1X2 : le favori à domicile reçoit un poids supplémentaire,
+        // sans transformer une cote d'équipe en probabilité individuelle de marquer.
+        const oddsFactor = !oddsAvailable ? 1 : teamOdds<=1.50 ? (p.teamId===homeId?1.12:1.06) : teamOdds<=1.75 ? (p.teamId===homeId?1.10:1.05) : teamOdds<=2.00 ? (p.teamId===homeId?1.08:1.04) : teamOdds<=2.50 ? 1.04 : 1.00;
+        const matchOddsContext = {homeOdds,awayOdds,teamOdds,favorite:matchOdds?.favorite||null,bookmakersCount:matchOdds?.bookmakersCount||0,score:matchOddsScore,factor:oddsFactor};
         const expectedMinutes=Math.max(0,Math.min(90,
           lineupConfirmed?Math.max(65,Math.min(85,minutes/Math.max(1,appearances))):
           lineupAvailable?Math.max(55,Math.min(78,minutes/Math.max(1,appearances))):
           Math.max(45,Math.min(72,minutes/Math.max(1,appearances)))
         ));
-        const goalProbability=poissonPercent(goalBaseRate*expectedMinutes/90*contextFactor);
-        const gaProbability=poissonPercent(gaBaseRate*expectedMinutes/90*contextFactor);
+        const goalProbability=poissonPercent(goalBaseRate*expectedMinutes/90*contextFactor*oddsFactor);
+        const gaProbability=poissonPercent(gaBaseRate*expectedMinutes/90*contextFactor*oddsFactor);
         const confidenceScore=Math.round(Math.min(100,
           20+Math.min(5,appearances)*8+(lineupConfirmed?25:lineupAvailable?10:0)+
           (p.minutes>0?10:0)+(shotDataAvailable||p.statsXg>0?17:0)+(shotsOnTarget>0?8:0)
@@ -545,7 +561,7 @@ module.exports = async function handler(req, res) {
           shots:Number(shots.toFixed(1)),shotsOnTarget:Number(shotsOnTarget.toFixed(1)),xg:Number(xg.toFixed(2)),
           minutes:Number(minutes.toFixed(0)),minutesEstimated:!(p.minutes>0),
           teamXgPerMatch:Number(attackMetric.toFixed(2)),opponentXgaPerMatch:Number(defenseMetric.toFixed(2)),
-          goalComponents,gaComponents,goalIndex,gaIndex,
+          goalComponents,gaComponents,goalIndex,gaIndex,matchOddsContext,
           goalProbability,gaProbability,confidenceScore,eligibleForBet,expectedMinutes,
           probabilityModel:'poisson-shrunk-v1'
         };
@@ -554,7 +570,7 @@ module.exports = async function handler(req, res) {
     const diagnostics = [];
     if (homeRecent.length<5 || awayRecent.length<5) diagnostics.push('Campione recente incompleto: ultime gare trovate casa='+homeRecent.length+', ospite='+awayRecent.length+'.');
     if (!uniqueMatches.length) diagnostics.push('Non sono state trovate partite concluse recenti per entrambe le squadre nei campionati coperti.');
-    diagnostics.push('Fonte: PitchAPI. Indici multi-fattoriali: gol/assist e minuti recenti, tiri, tiri in porta, xG, creazione occasioni, rendimento offensivo della squadra, vulnerabilità avversaria e piccolo aggiustamento casa. I valori mancanti non vengono inventati; minuti stimati solo se il provider non li riporta. Indici comparativi, non probabilità calibrate.');
+    diagnostics.push('Fonte: PitchAPI. Indici multi-fattoriali: gol/assist e minuti recenti, tiri, tiri in porta, xG, creazione occasioni, rendimento offensivo della squadra, vulnerabilità avversaria e piccolo aggiustamento casa. Le quote 1X2 medie disponibili ricevono un peso moderato come indicatore di forza della squadra, con bonus aggiuntivo contenuto per il favorito in casa; non sono quote del mercato marcatore. I valori mancanti non vengono inventati; minuti stimati solo se il provider non li riporta. Indici comparativi, non probabilità calibrate.');
     const message = players.length
       ? 'Quote delle squadre ignorate. Giocatori selezionati da entrambe le squadre. '+(lineupConfirmed
           ? 'Formazione ufficiale pubblicata: sono mostrati i titolari ufficiali.'
@@ -564,7 +580,7 @@ module.exports = async function handler(req, res) {
       : 'Nessun giocatore con gol o assist rilevati nelle ultime partite concluse disponibili per questa gara. ' + diagnostics.join(' | ');
     // L'analisi non va memorizzata a lungo: rose e formazioni possono cambiare.
     res.setHeader('Cache-Control','no-store, max-age=0');
-    return res.status(200).json({message,diagnostics,model:'poisson-shrunk-v1+multifactor-v1',weights:{goal:{recentGoals:22,xG:24,shots:18,shotsOnTarget:10,finishing:8,teamAttack:8,opponentDefense:6,homeAdvantage:2,minutes:2},goalAssist:{goalContributions:17,xG:20,shots:15,shotsOnTarget:10,assists:14,chanceCreation:8,teamAttack:7,opponentDefense:6,homeAdvantage:2,minutes:1}},teamContext:{home:teamForm.get(homeId),away:teamForm.get(awayId)},players:players.slice(0,24)});
+    return res.status(200).json({message,diagnostics,matchOdds:{available:oddsAvailable,homeOdds,awayOdds,favorite:matchOdds?.favorite||null,bookmakersCount:matchOdds?.bookmakersCount||0},model:'poisson-shrunk-v1+multifactor-odds-v2',weights:{goal:{recentGoals:20,xG:22,shots:16,shotsOnTarget:10,finishing:8,teamAttack:6,opponentDefense:6,homeAdvantage:2,minutes:2,matchOdds:8},goalAssist:{goalContributions:15,xG:18,shots:13,shotsOnTarget:10,assists:14,chanceCreation:8,teamAttack:5,opponentDefense:6,homeAdvantage:2,minutes:1,matchOdds:8}},teamContext:{home:teamForm.get(homeId),away:teamForm.get(awayId)},players:players.slice(0,24)});
   } catch (error) {
     res.setHeader('Cache-Control','no-store, max-age=0');
     const status = error.status || 502;
