@@ -43,7 +43,7 @@ const demo=[
 {id:'p18',name:'Jude Bellingham',team:'Inghilterra',teamType:'national',league:'Qualificazioni Mondiali',role:'Centrocampista',goal:29,ga:52,form:7.7,mins:78,match:'Esempio partita nazionale',demo:true},
 ];
 function load(){try{let x=JSON.parse(localStorage.getItem(KEY));if(x&&Array.isArray(x.players))return x}catch(e){}return{players:[],odds:[],picks:[]}}
-const competitionOptions=['Serie A','Serie B','Premier League','Championship','La Liga','Segunda División','Bundesliga','2. Bundesliga','Ligue 1','Ligue 2','Primeira Liga','Eredivisie','MLS','Saudi Pro League','Coppa Italia','FA Cup','Copa del Rey','DFB-Pokal','Coupe de France','Taça de Portugal','Champions League','Europa League','Conference League','Supercoppa UEFA','Nations League','Qualificazioni Europei','Qualificazioni Mondiali UEFA','Europei','Mondiali','Coppa d’Africa','Olimpiadi'];
+const competitionOptions=['Serie A','Serie B','Premier League','Championship','La Liga','Segunda División','Bundesliga','2. Bundesliga','Ligue 1','Primeira Liga','Eredivisie','MLS','Saudi Pro League','Coppa Italia','FA Cup','Copa del Rey','DFB-Pokal','Coupe de France','Taça de Portugal','Champions League','Europa League','Conference League','Supercoppa UEFA','Nations League','Qualificazioni Europei','Qualificazioni Mondiali UEFA','Europei','Mondiali','Coppa d’Africa','Olimpiadi'];
 let s=load(),kind='goal',livePlayersData=[],liveFixtureId=null,liveSort='goal',liveAnalysisMessage='';
 function save(){localStorage.setItem(KEY,JSON.stringify(s));render()}
 function esc(x){return String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
