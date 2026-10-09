@@ -42,8 +42,6 @@ const demo=[
 {id:'p16',name:'Cristiano Ronaldo',team:'Portogallo',teamType:'national',league:'Qualificazioni Europei/Mondiali',role:'Attaccante',goal:45,ga:51,form:7.6,mins:75,match:'Esempio partita nazionale',demo:true},
 {id:'p17',name:'Lamine Yamal',team:'Spagna',teamType:'national',league:'Nations League',role:'Attaccante',goal:28,ga:58,form:8.0,mins:75,match:'Esempio partita nazionale',demo:true},
 {id:'p18',name:'Jude Bellingham',team:'Inghilterra',teamType:'national',league:'Qualificazioni Mondiali',role:'Centrocampista',goal:29,ga:52,form:7.7,mins:78,match:'Esempio partita nazionale',demo:true},
-{id:'p19',name:'Vinícius Júnior',team:'Brasile',teamType:'national',league:'Qualificazioni Mondiali CONMEBOL',role:'Attaccante',goal:31,ga:55,form:7.8,mins:76,match:'Esempio partita nazionale',demo:true},
-{id:'p20',name:'Alexis Sánchez',team:'Cile',teamType:'national',league:'Qualificazioni Mondiali CONMEBOL',role:'Attaccante',goal:22,ga:39,form:6.5,mins:65,match:'Esempio partita nazionale',demo:true}
 ];
 function load(){try{let x=JSON.parse(localStorage.getItem(KEY));if(x&&Array.isArray(x.players))return x}catch(e){}return{players:[],odds:[],picks:[]}}
 const competitionOptions=['Serie A','Serie B','Premier League','Championship','La Liga','Segunda División','Bundesliga','2. Bundesliga','Ligue 1','Ligue 2','Primeira Liga','Eredivisie','MLS','Saudi Pro League','Coppa Italia','FA Cup','Copa del Rey','DFB-Pokal','Coupe de France','Taça de Portugal','Champions League','Europa League','Conference League','Supercoppa UEFA','Nations League','Qualificazioni Europei','Qualificazioni Mondiali UEFA','Europei','Mondiali','Coppa d’Africa','Olimpiadi'];
