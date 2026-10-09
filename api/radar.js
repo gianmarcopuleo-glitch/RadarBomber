@@ -54,6 +54,83 @@ const indexFromRecent = (goals, assists, games, kind) => {
   const score = 100 * (1 - Math.exp(-perMatch * (kind === 'goal' ? 1.35 : 1.0)));
   return Math.max(0, Math.min(99, Math.round(score)));
 };
+const ODDS_SPORT_BY_LEAGUE = {
+  'serie a':'soccer_italy_serie_a',
+  'premier league':'soccer_epl',
+  'la liga':'soccer_spain_la_liga',
+  'bundesliga':'soccer_germany_bundesliga',
+  'ligue 1':'soccer_france_ligue_one',
+  'eredivisie':'soccer_netherlands_eredivisie',
+  'primeira liga':'soccer_portugal_primeira_liga',
+  'liga portugal':'soccer_portugal_primeira_liga',
+  'uefa champions league':'soccer_uefa_champs_league',
+  'uefa europa league':'soccer_uefa_europa_league'
+};
+const oddsCache = new Map();
+const oddsSportForLeague = name => ODDS_SPORT_BY_LEAGUE[normalize(name)];
+const teamKey = name => normalize(name)
+  .replace(/\\b(fc|cf|ac|sc|ssc|as|us|afc|cfc|calcio|club|de|the)\\b/g,' ')
+  .replace(/\\s+/g,' ').trim();
+const sameTeam = (a,b) => {
+  const x=teamKey(a), y=teamKey(b);
+  return !!x && !!y && (x===y || (Math.min(x.length,y.length)>=5 && (x.includes(y)||y.includes(x))));
+};
+async function oddsEvents(sportKey) {
+  const key=(process.env.ODDS_API_KEY||'').trim();
+  if(!key) {
+    const e=new Error('Per applicare il filtro quote configura ODDS_API_KEY nelle Environment Variables di Vercel.'); e.status=503; throw e;
+  }
+  const cached=oddsCache.get(sportKey);
+  if(cached && Date.now()-cached.at<60000) return cached.events;
+  const url='https://api.the-odds-api.com/v4/sports/'+encodeURIComponent(sportKey)+'/odds/?regions=eu&markets=h2h&oddsFormat=decimal&apiKey='+encodeURIComponent(key);
+  const response=await fetch(url,{signal:AbortSignal.timeout(12000)});
+  let json=[];
+  try{json=await response.json()}catch{}
+  if(!response.ok || !Array.isArray(json)) {
+    const e=new Error('The Odds API non disponibile per '+sportKey+' (HTTP '+response.status+'). Verifica piano e chiave ODDS_API_KEY.'); e.status=response.status===401||response.status===403?503:502; throw e;
+  }
+  oddsCache.set(sportKey,{at:Date.now(),events:json});
+  return json;
+}
+function median(values) {
+  const v=values.filter(n=>Number.isFinite(n)&&n>1).sort((a,b)=>a-b);
+  if(!v.length)return null;
+  const m=Math.floor(v.length/2);
+  return Number((v.length%2?v[m]:(v[m-1]+v[m])/2).toFixed(2));
+}
+function getEventPrices(event) {
+  const home=[],away=[];
+  for(const book of event.bookmakers||[]) {
+    const market=(book.markets||[]).find(m=>m.key==='h2h');
+    if(!market)continue;
+    const h=(market.outcomes||[]).find(o=>sameTeam(o.name,event.home_team));
+    const a=(market.outcomes||[]).find(o=>sameTeam(o.name,event.away_team));
+    if(h)home.push(Number(h.price));
+    if(a)away.push(Number(a.price));
+  }
+  const homeOdds=median(home),awayOdds=median(away);
+  let favorite=null;
+  if(homeOdds!=null && awayOdds!=null) {
+    if(homeOdds<awayOdds && homeOdds<=1.65)favorite='home';
+    else if(awayOdds<homeOdds && awayOdds<=1.55)favorite='away';
+  }
+  return {homeOdds,awayOdds,favorite,bookmakersCount:Math.min(home.length,away.length)};
+}
+function matchOddsForFixture(fixture, events) {
+  const event=(events||[]).find(e=>sameTeam(e.home_team,fixture.home_team&&fixture.home_team.name)&&sameTeam(e.away_team,fixture.away_team&&fixture.away_team.name));
+  if(!event)return null;
+  const prices=getEventPrices(event);
+  const fixtureTime=Date.parse(fixture.time_utc||fixture.date||'');
+  const eventTime=Date.parse(event.commence_time||'');
+  if(Number.isFinite(fixtureTime)&&Number.isFinite(eventTime)&&Math.abs(fixtureTime-eventTime)>36*60*60*1000)return null;
+  return {...prices,eventId:event.id,updatedAt:event.bookmakers?.[0]?.last_update||null};
+}
+async function oddsForFixture(fixture) {
+  const sportKey=oddsSportForLeague(fixture.league&&fixture.league.name);
+  if(!sportKey)return null;
+  const events=await oddsEvents(sportKey);
+  return matchOddsForFixture(fixture,events);
+}
 async function pitch(path) {
   const key = (process.env.PITCHAPI_API_KEY || '').trim();
   if (!key) {
@@ -104,28 +181,43 @@ module.exports = async function handler(req, res) {
           .filter(l => l.id != null)
           .map(l => String(l.id))
       );
-      const fixtures = matches
-        .filter(m => allowed(m.league && m.league.name) &&
+      const eligibleMatches = matches
+        .filter(m => allowedLeague(m.league) &&
           m.league && m.league.id != null &&
-          supportedLeagueIds.has(String(m.league.id)))
-        .sort((a,b) => {
-          const pa = LEAGUE_PRIORITY.findIndex(x => normalize(x) === normalize(a.league && a.league.name));
-          const pb = LEAGUE_PRIORITY.findIndex(x => normalize(x) === normalize(b.league && b.league.name));
-          return (pa < 0 ? 999 : pa) - (pb < 0 ? 999 : pb) ||
-            String(a.time_utc || '').localeCompare(String(b.time_utc || ''));
+          supportedLeagueIds.has(String(m.league.id)) &&
+          oddsSportForLeague(m.league.name));
+      const sportKeys=[...new Set(eligibleMatches.map(m=>oddsSportForLeague(m.league.name)))];
+      const oddsBySport=new Map();
+      await Promise.all(sportKeys.map(async sportKey=>{
+        try{oddsBySport.set(sportKey,await oddsEvents(sportKey))}catch{}
+      }));
+      const fixtures = eligibleMatches
+        .map(m=>{
+          const prices=matchOddsForFixture(m,oddsBySport.get(oddsSportForLeague(m.league.name))||[]);
+          if(!prices||!prices.favorite)return null;
+          return {
+            id:String(m.id),
+            home:m.home_team&&m.home_team.name||'Squadra casa',
+            away:m.away_team&&m.away_team.name||'Squadra ospite',
+            league:m.league&&m.league.name||'Competizione',
+            time:m.time_utc?new Date(m.time_utc).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',timeZone:'Europe/Rome'}):date,
+            status:m.status||'In programma',
+            homeOdds:prices.homeOdds,
+            awayOdds:prices.awayOdds,
+            favorite:prices.favorite,
+            bookmakersCount:prices.bookmakersCount
+          };
         })
-        .slice(0,24)
-        .map(m => ({
-          id: String(m.id),
-          home: m.home_team && m.home_team.name || 'Squadra casa',
-          away: m.away_team && m.away_team.name || 'Squadra ospite',
-          league: m.league && m.league.name || 'Competizione',
-          time: m.time_utc ? new Date(m.time_utc).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',timeZone:'Europe/Rome'}) : date,
-          status: m.status || 'In programma'
-        }));
+        .filter(Boolean)
+        .sort((a,b)=>{
+          const pa=LEAGUE_PRIORITY.findIndex(x=>normalize(x)===normalize(a.league));
+          const pb=LEAGUE_PRIORITY.findIndex(x=>normalize(x)===normalize(b.league));
+          return (pa<0?999:pa)-(pb<0?999:pb);
+        })
+        .slice(0,24);
       const message = fixtures.length
-        ? 'Calendario aggiornato da PitchAPI. Analisi giocatori basata sui dati delle partite recenti disponibili; copertura limitata alle competizioni elencate nei filtri.'
-        : 'PitchAPI non restituisce partite in programma nelle competizioni selezionate per questa data. Prova un’altra data o verifica la copertura del campionato.';
+        ? 'Partite filtrate per competizioni di prima fascia e quote mediane 1X2: favorita casa ≤1,65 oppure favorita ospite ≤1,55. Le quote provengono da The Odds API.'
+        : 'Nessuna partita con quote disponibili rispetta le soglie: favorita casa ≤1,65 o favorita ospite ≤1,55. Verifica ODDS_API_KEY, piano e data selezionata.';
       res.setHeader('Cache-Control','s-maxage=60, stale-while-revalidate=60');
       return res.status(200).json({date,mode:'pitchapi',message,totalFixturesFromProvider:matches.length,filteredFixtures:fixtures.length,fixtures});
     }
@@ -134,6 +226,9 @@ module.exports = async function handler(req, res) {
     if (!/^m_[A-Za-z0-9]{6}$/.test(fixtureId)) return res.status(400).json({error:'ID partita PitchAPI non valido. Aggiorna il calendario e seleziona una partita della lista.'});
     const fixture = await pitch('/matches/' + encodeURIComponent(fixtureId));
     if (!fixture || !fixture.id) return res.status(404).json({error:'Partita non trovata su PitchAPI.'});
+    if (!allowedLeague(fixture.league)) return res.status(403).json({error:'Competizione esclusa: sono ammesse solo le competizioni principali selezionate.'});
+    const prices = await oddsForFixture(fixture);
+    if (!prices || !prices.favorite) return res.status(200).json({message:'Partita esclusa: non sono disponibili quote 1X2 che rispettino le soglie previste.',players:[],odds:null});
     const home = fixture.home_team || {};
     const away = fixture.away_team || {};
     const homeId = String(home.id || '');
@@ -248,7 +343,8 @@ module.exports = async function handler(req, res) {
       // Se il provider non pubblica ancora una formazione, non mostriamo nomi che
       // potrebbero appartenere a rose precedenti. Quando è disponibile, la formazione
       // è l'unica lista autorizzata per questa partita.
-      .filter(p=>lineupAvailable && lineupPlayerIds.has(String(p.id)) && (p.goals>0||p.assists>0))
+      .filter(p=>lineupAvailable && lineupPlayerIds.has(String(p.id)) && (p.goals>0||p.assists>0) &&
+        (prices.favorite==='home' ? p.teamId===homeId : p.teamId===awayId))
       .map(p=>{
         const officialSource = lineupPlayersById.get(String(p.id));
         return {...p,
@@ -265,7 +361,7 @@ module.exports = async function handler(req, res) {
     if (!uniqueMatches.length) diagnostics.push('Non sono state trovate partite concluse recenti per entrambe le squadre nei campionati coperti.');
     diagnostics.push('Fonte: PitchAPI. Indici comparativi derivati da gol e assist nelle partite recenti; non sono probabilità calibrate. La formazione viene aggiornata dal provider e può cambiare fino alla pubblicazione ufficiale.');
     const message = players.length
-      ? (lineupConfirmed
+      ? 'Quote mediane 1X2: casa '+prices.homeOdds+' · trasferta '+prices.awayOdds+'. Favorita selezionata: '+(prices.favorite==='home'?'squadra di casa':'squadra ospite')+'. '+(lineupConfirmed
           ? 'Formazione ufficiale pubblicata: elenco limitato ai titolari ufficiali.'
           : 'Formazione probabile: elenco provvisorio dei titolari previsti, aggiornabile quando PitchAPI pubblica gli undici ufficiali.') + ' ' + diagnostics.join(' | ')
       : !lineupAvailable
@@ -275,7 +371,7 @@ module.exports = async function handler(req, res) {
           : 'Nessun titolare probabile ha gol o assist rilevati nelle partite recenti disponibili. ') + diagnostics.join(' | ');
     // L'analisi non va memorizzata a lungo: rose e formazioni possono cambiare.
     res.setHeader('Cache-Control','no-store, max-age=0');
-    return res.status(200).json({message,diagnostics,players:players.slice(0,24)});
+    return res.status(200).json({message,diagnostics,odds:{home:prices.homeOdds,away:prices.awayOdds,favorite:prices.favorite,bookmakersCount:prices.bookmakersCount},players:players.slice(0,24)});
   } catch (error) {
     res.setHeader('Cache-Control','no-store, max-age=0');
     const status = error.status || 502;
