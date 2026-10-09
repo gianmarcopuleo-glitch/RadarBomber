@@ -111,6 +111,12 @@ const allowedLeague = league => {
     expected.codes.some(c => normalize(c) === code);
 };
 const clamp = n => Math.max(0, Math.min(100, Number.isFinite(n) ? n : 0));
+const poissonPercent = rate => Math.round(clamp((1 - Math.exp(-Math.max(0, rate))) * 100));
+const contextMultiplier = (attack, defense) => {
+  const a = Number.isFinite(attack) && attack > 0 ? attack / 1.45 : 1;
+  const d = Number.isFinite(defense) && defense > 0 ? defense / 1.35 : 1;
+  return Math.max(0.72, Math.min(1.28, Math.sqrt(a * d)));
+};
 const rateScore = (value, ceiling) => clamp((Math.max(0, value || 0) / ceiling) * 100);
 const statAny = (player, keys) => {
   for (const key of keys) {
@@ -505,6 +511,30 @@ module.exports = async function handler(req, res) {
           [gaComponents.shotsOnTarget,10],[gaComponents.assists,14],[gaComponents.chanceCreation,8],
           [gaComponents.teamAttack,7],[gaComponents.opponentDefense,6],[gaComponents.homeAdvantage,2],[gaComponents.minutes,1]
         ]);
+        // Probabilità evento: conversione Poisson da tassi individuali regolarizzati.
+        // La regolarizzazione riduce l'effetto di campioni piccoli; non sostituisce una calibrazione storica.
+        const appearances=Math.max(0,p.appearances);
+        const shrunkGoalRate=(goalsPer90*appearances+0.12*3)/(appearances+3);
+        const shrunkXgRate=(xgPer90*appearances+0.12*2)/(appearances+2);
+        const shrunkGaRate=(gaPer90*appearances+0.20*3)/(appearances+3);
+        const shrunkAssistRate=(assistsPer90*appearances+0.08*3)/(appearances+3);
+        const goalBaseRate=shotDataAvailable||p.statsXg>0
+          ? 0.62*shrunkXgRate+0.38*shrunkGoalRate
+          : 0.70*shrunkGoalRate+0.30*(shotsOnTarget>0?Math.min(0.45,onTargetPer90*0.18):0.08);
+        const gaBaseRate=0.65*shrunkGaRate+0.22*shrunkXgRate+0.13*shrunkAssistRate;
+        const contextFactor=contextMultiplier(attackMetric,defenseMetric);
+        const expectedMinutes=Math.max(0,Math.min(90,
+          lineupConfirmed?Math.max(65,Math.min(85,minutes/Math.max(1,appearances))):
+          lineupAvailable?Math.max(55,Math.min(78,minutes/Math.max(1,appearances))):
+          Math.max(45,Math.min(72,minutes/Math.max(1,appearances)))
+        ));
+        const goalProbability=poissonPercent(goalBaseRate*expectedMinutes/90*contextFactor);
+        const gaProbability=poissonPercent(gaBaseRate*expectedMinutes/90*contextFactor);
+        const confidenceScore=Math.round(Math.min(100,
+          20+Math.min(5,appearances)*8+(lineupConfirmed?25:lineupAvailable?10:0)+
+          (p.minutes>0?10:0)+(shotDataAvailable||p.statsXg>0?17:0)+(shotsOnTarget>0?8:0)
+        ));
+        const eligibleForBet=Boolean(lineupConfirmed && appearances>=3 && confidenceScore>=70 && (shotDataAvailable||p.statsXg>0||p.statsShots>0));
         return {...p,
           name:officialSource&&officialSource.name||p.name,
           team:p.teamId===homeId?home.name:away.name,
@@ -515,7 +545,9 @@ module.exports = async function handler(req, res) {
           shots:Number(shots.toFixed(1)),shotsOnTarget:Number(shotsOnTarget.toFixed(1)),xg:Number(xg.toFixed(2)),
           minutes:Number(minutes.toFixed(0)),minutesEstimated:!(p.minutes>0),
           teamXgPerMatch:Number(attackMetric.toFixed(2)),opponentXgaPerMatch:Number(defenseMetric.toFixed(2)),
-          goalComponents,gaComponents,goalIndex,gaIndex
+          goalComponents,gaComponents,goalIndex,gaIndex,
+          goalProbability,gaProbability,confidenceScore,eligibleForBet,expectedMinutes,
+          probabilityModel:'poisson-shrunk-v1'
         };
       })
       .sort((a,b)=>Math.max(b.goalIndex,b.gaIndex)-Math.max(a.goalIndex,a.gaIndex));
@@ -532,7 +564,7 @@ module.exports = async function handler(req, res) {
       : 'Nessun giocatore con gol o assist rilevati nelle ultime partite concluse disponibili per questa gara. ' + diagnostics.join(' | ');
     // L'analisi non va memorizzata a lungo: rose e formazioni possono cambiare.
     res.setHeader('Cache-Control','no-store, max-age=0');
-    return res.status(200).json({message,diagnostics,model:'multifactor-v1',weights:{goal:{recentGoals:22,xG:24,shots:18,shotsOnTarget:10,finishing:8,teamAttack:8,opponentDefense:6,homeAdvantage:2,minutes:2},goalAssist:{goalContributions:17,xG:20,shots:15,shotsOnTarget:10,assists:14,chanceCreation:8,teamAttack:7,opponentDefense:6,homeAdvantage:2,minutes:1}},teamContext:{home:teamForm.get(homeId),away:teamForm.get(awayId)},players:players.slice(0,24)});
+    return res.status(200).json({message,diagnostics,model:'poisson-shrunk-v1+multifactor-v1',weights:{goal:{recentGoals:22,xG:24,shots:18,shotsOnTarget:10,finishing:8,teamAttack:8,opponentDefense:6,homeAdvantage:2,minutes:2},goalAssist:{goalContributions:17,xG:20,shots:15,shotsOnTarget:10,assists:14,chanceCreation:8,teamAttack:7,opponentDefense:6,homeAdvantage:2,minutes:1}},teamContext:{home:teamForm.get(homeId),away:teamForm.get(awayId)},players:players.slice(0,24)});
   } catch (error) {
     res.setHeader('Cache-Control','no-store, max-age=0');
     const status = error.status || 502;
