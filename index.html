@@ -47,7 +47,7 @@ const demo=[
 ];
 function load(){try{let x=JSON.parse(localStorage.getItem(KEY));if(x&&Array.isArray(x.players))return x}catch(e){}return{players:[],odds:[],picks:[]}}
 const competitionOptions=['Serie A','Serie B','Premier League','Championship','La Liga','Segunda División','Bundesliga','2. Bundesliga','Ligue 1','Ligue 2','Primeira Liga','Eredivisie','MLS','Saudi Pro League','Brasileirão','Liga Profesional Argentina','Coppa Italia','FA Cup','Copa del Rey','DFB-Pokal','Coupe de France','Taça de Portugal','Champions League','Europa League','Conference League','Supercoppa UEFA','Copa Libertadores','Copa Sudamericana','Nations League','Qualificazioni Europei','Qualificazioni Mondiali UEFA','Qualificazioni Mondiali CONMEBOL','Qualificazioni Mondiali CAF','Qualificazioni Mondiali AFC','Qualificazioni Mondiali CONCACAF','Europei','Mondiali','Coppa d’Africa','Coppa America','Olimpiadi'];
-let s=load(),kind='goal';
+let s=load(),kind='goal',livePlayersData=[],liveFixtureId=null,liveSort='goal';
 function save(){localStorage.setItem(KEY,JSON.stringify(s));render()}
 function esc(x){return String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function best(id,m){return s.odds.filter(o=>o.playerId===id&&o.market===m).sort((a,b)=>b.value-a.value)[0]}
@@ -73,9 +73,25 @@ async function loadLivePlayers(fixtureId){
   const r=await fetch('/api/radar?fixture='+encodeURIComponent(fixtureId),{cache:'no-store'}),data=await r.json();
   if(!r.ok)throw new Error(data.error||'Errore nel recupero statistiche');
   status.textContent=data.message||'Analisi aggiornata.';
-  const list=data.players||[];
-  out.innerHTML=list.length?'<div class="note">Indice gol e indice gol/assist sono calcolati dalle statistiche stagionali disponibili. Se le formazioni non sono ancora state pubblicate, i candidati sono provvisori; non vengono presentati come titolari certi.</div>'+list.map(p=>'<article class="player"><div><div class="name">'+esc(p.name)+'</div><div class="team">'+esc(p.team)+' · '+esc(p.position||'Ruolo n.d.')+' · '+(p.starter?'Titolare confermato':p.lineupKnown?'Non indicato tra i titolari':'Formazione non ancora pubblicata')+(p.injured?' · ASSENTE/INFORTUNIO':'')+'</div><div class="tiny">'+p.goals+' gol · '+p.assists+' assist · '+p.minutes+' minuti</div></div><div><div class="tiny">Indice gol</div><div class="score">'+p.goalIndex+'/100</div></div><div><div class="tiny">Indice gol + assist</div><div class="score">'+p.gaIndex+'/100</div></div><div><button onclick="saveLivePick('+JSON.stringify(String(fixtureId))+','+JSON.stringify(p.name)+','+JSON.stringify(p.team)+',\'goal\','+p.goalIndex+')">Tip gol</button><button style="margin-top:5px" onclick="saveLivePick('+JSON.stringify(String(fixtureId))+','+JSON.stringify(p.name)+','+JSON.stringify(p.team)+',\'ga\','+p.gaIndex+')">Tip G+A</button></div></article>').join(''):'<div class="empty">Nessun dato giocatore disponibile per questa partita. Riprova quando sono disponibili statistiche e formazioni.</div>';
+  livePlayersData=data.players||[];
+  liveFixtureId=fixtureId;
+  liveSort='goal';
+  renderLivePlayers();
  }catch(e){status.textContent='Impossibile analizzare questa partita: '+e.message;out.innerHTML='<div class="empty">Controlla la configurazione della fonte dati e riprova.</div>'}
+}
+function setLiveSort(mode){
+ liveSort=mode==='ga'?'ga':'goal';
+ renderLivePlayers();
+}
+function renderLivePlayers(){
+ const out=document.getElementById('liveMatches');
+ if(!out)return;
+ const list=livePlayersData.slice().sort((a,b)=>liveSort==='ga'?b.gaIndex-a.gaIndex:b.goalIndex-a.goalIndex);
+ if(!list.length){
+  out.innerHTML='<div class="empty">Nessun dato giocatore disponibile per questa partita. Riprova quando sono disponibili statistiche e formazioni.</div>';
+  return;
+ }
+ out.innerHTML='<div class="note">Indici calcolati dalle statistiche stagionali: sono indicatori comparativi, non probabilità calibrate. Usa i due filtri per ordinare separatamente i candidati marcatore e quelli per gol o assist.</div><div class="actions" style="margin:10px 0"><button class="'+(liveSort==='goal'?'primary':'')+'" onclick="setLiveSort(\'goal\')">Più alto indice gol</button><button class="'+(liveSort==='ga'?'primary':'')+'" onclick="setLiveSort(\'ga\')">Più alto indice gol + assist</button></div>'+list.map(p=>'<article class="player"><div><div class="name">'+esc(p.name)+'</div><div class="team">'+esc(p.team)+' · '+esc(p.position||'Ruolo n.d.')+' · '+(p.starter?'Titolare confermato':p.lineupKnown?'Non indicato tra i titolari':'Formazione non ancora pubblicata')+(p.injured?' · ASSENTE/INFORTUNIO':'')+'</div><div class="tiny">'+p.goals+' gol · '+p.assists+' assist · '+p.minutes+' minuti</div></div><div><div class="tiny">Indice gol</div><div class="score">'+p.goalIndex+'/100</div></div><div><div class="tiny">Indice gol + assist</div><div class="score">'+p.gaIndex+'/100</div></div><div><button onclick="saveLivePick('+JSON.stringify(String(liveFixtureId))+','+JSON.stringify(p.name)+','+JSON.stringify(p.team)+',\'goal\','+p.goalIndex+')">Tip gol</button><button style="margin-top:5px" onclick="saveLivePick('+JSON.stringify(String(liveFixtureId))+','+JSON.stringify(p.name)+','+JSON.stringify(p.team)+',\'ga\','+p.gaIndex+')">Tip G+A</button></div></article>').join('');
 }
 function saveLivePick(fixtureId,name,team,market,index){
  const p={id:'live_'+Date.now(),playerId:'live_'+fixtureId+'_'+name,name,team,match:'Partita ID '+fixtureId,matchDate:new Date().toISOString().slice(0,10),market,prob:index,odd:null,date:new Date().toLocaleDateString('it-IT'),createdAt:new Date().toISOString(),result:'pending',source:'API-Football'};
