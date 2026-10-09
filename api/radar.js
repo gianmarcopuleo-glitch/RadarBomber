@@ -399,14 +399,14 @@ module.exports = async function handler(req, res) {
       // Se il provider non pubblica ancora una formazione, non mostriamo nomi che
       // potrebbero appartenere a rose precedenti. Quando è disponibile, la formazione
       // è l'unica lista autorizzata per questa partita.
-      .filter(p=>lineupAvailable && lineupPlayerIds.has(String(p.id)) && (p.goals>0||p.assists>0))
+      .filter(p=>(!lineupAvailable || lineupPlayerIds.has(String(p.id))) && (p.goals>0||p.assists>0))
       .map(p=>{
         const officialSource = lineupPlayersById.get(String(p.id));
         return {...p,
         name: officialSource && officialSource.name || p.name,
         team: p.teamId===homeId?home.name:away.name,
         shirtNumber: officialSource && officialSource.shirtNumber || '',
-        starter:true,lineupKnown:true,lineupConfirmed,lineupType,
+        starter:lineupAvailable && lineupPlayerIds.has(String(p.id)),lineupKnown:lineupAvailable,lineupConfirmed,lineupType,
         goalIndex:indexFromRecent(p.goals,p.assists,Math.max(1,p.recentMatches),'goal'),
         gaIndex:indexFromRecent(p.goals,p.assists,Math.max(1,p.recentMatches),'ga')
       };})
@@ -417,13 +417,11 @@ module.exports = async function handler(req, res) {
     diagnostics.push('Fonte: PitchAPI. Indici comparativi derivati da gol e assist nelle partite recenti; non sono probabilità calibrate. La formazione viene aggiornata dal provider e può cambiare fino alla pubblicazione ufficiale.');
     const message = players.length
       ? 'Quote delle squadre ignorate. Giocatori selezionati da entrambe le squadre. '+(lineupConfirmed
-          ? 'Formazione ufficiale pubblicata: elenco limitato ai titolari ufficiali.'
-          : 'Formazione probabile: elenco provvisorio dei titolari previsti, aggiornabile quando PitchAPI pubblica gli undici ufficiali.') + ' ' + diagnostics.join(' | ')
-      : !lineupAvailable
-        ? 'PitchAPI non ha ancora fornito una formazione attuale utilizzabile per questa partita. Se il provider restituisce solo l’ultimo undici noto, i nomi vengono esclusi per evitare giocatori vecchi; riprova quando pubblica una formazione aggiornata.'
-        : (lineupConfirmed
-          ? 'Nessun titolare ufficiale ha gol o assist rilevati nelle partite recenti disponibili. '
-          : 'Nessun titolare probabile ha gol o assist rilevati nelle partite recenti disponibili. ') + diagnostics.join(' | ');
+          ? 'Formazione ufficiale pubblicata: sono mostrati i titolari ufficiali.'
+          : lineupAvailable
+            ? 'Formazione probabile disponibile: i candidati sono limitati ai titolari previsti.'
+            : 'Formazione non ancora disponibile: candidati individuati dalle statistiche recenti, ma non confermati titolari.') + ' ' + diagnostics.join(' | ')
+      : 'Nessun giocatore con gol o assist rilevati nelle ultime partite concluse disponibili per questa gara. ' + diagnostics.join(' | ');
     // L'analisi non va memorizzata a lungo: rose e formazioni possono cambiare.
     res.setHeader('Cache-Control','no-store, max-age=0');
     return res.status(200).json({message,diagnostics,odds:null,players:players.slice(0,24)});
