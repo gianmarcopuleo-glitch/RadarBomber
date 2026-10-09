@@ -50,6 +50,7 @@ function esc(x){return String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&l
 function best(id,m){return s.odds.filter(o=>o.playerId===id&&o.market===m).sort((a,b)=>b.value-a.value)[0]}
 function addPick(id){let p=s.players.find(x=>x.id===id),m=kind==='ga'?'ga':'goal',o=best(id,m);s.picks.push({id:'k'+Date.now(),playerId:id,name:p.name,team:p.team,match:p.match||'',matchDate:p.matchDate||'',market:m,prob:p[m],odd:o?o.value:null,date:new Date().toLocaleDateString('it-IT'),createdAt:new Date().toISOString(),result:'pending'});save();document.querySelector('[data-tab="results"]').click()}
 function result(id,v){let p=s.picks.find(x=>x.id===id);if(p){p.result=v;save()}}
+function qualifiesByOdds(f){const h=Number(f?.homeOdds),a=Number(f?.awayOdds);if(!Number.isFinite(h)||!Number.isFinite(a)||h<=1||a<=1)return false;return (h<a&&h<=1.65)||(a<h&&a<=1.55)}
 function localDateISO(d=new Date()){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
 function setLiveDate(mode){
  const input=document.getElementById('liveDate');if(!input)return;
@@ -74,7 +75,7 @@ async function refreshLive(){
    const r=await fetch('/api/radar?date='+encodeURIComponent(day),{cache:'no-store'});
    const data=await r.json();
    if(!r.ok)throw new Error(data.error||'Servizio temporaneamente non disponibile');
-   fixtureSets.push(...(data.fixtures||[]).map(f=>({...f,scanDate:day})));
+   fixtureSets.push(...(data.fixtures||[]).filter(qualifiesByOdds).map(f=>({...f,scanDate:day})));
   }
   const fixtures=[...new Map(fixtureSets.map(f=>[String(f.id),f])).values()];
   if(!fixtures.length){status.textContent='Nessuna partita filtrata disponibile per '+(weekendScan?'il weekend selezionato':selectedDate)+'.';out.innerHTML='<div class="empty">'+esc(status.textContent)+'</div>';return}
@@ -129,8 +130,8 @@ function showLiveFixtures(){
  const fixtures=window.liveFixtureDetails||[];
  livePlayersData=[];
  liveFixtureId=null;
- out.innerHTML=fixtures.length?fixtures.map(f=>'<article class="player" style="grid-template-columns:1fr auto"><div><div class="name">'+esc(f.home)+' – '+esc(f.away)+'</div><div class="team">'+esc(f.league)+' · '+esc(f.time||'Orario non disponibile')+' · '+esc(f.status||'In programma')+'</div><div class="tiny">Selezione senza filtro sulle quote delle squadre</div></div><div><button data-fixture="'+esc(f.id)+'" onclick="loadLivePlayers(this.dataset.fixture)">Analizza partita</button></div></article>').join(''):'<div class="empty">Aggiorna il radar per caricare le partite.</div>';
- status.textContent='Calendario generale: '+fixtures.length+' partite disponibili.';
+ out.innerHTML=fixtures.length?fixtures.map(f=>'<article class="player" style="grid-template-columns:1fr auto"><div><div class="name">'+esc(f.home)+' – '+esc(f.away)+'</div><div class="team">'+esc(f.league)+' · '+esc(f.time||'Orario non disponibile')+' · '+esc(f.status||'In programma')+'</div><div class="tiny">Filtro quote superato: casa '+Number(f.homeOdds).toFixed(2)+' · trasferta '+Number(f.awayOdds).toFixed(2)+' · favorita '+esc(f.favoriteTeam|| (f.favorite==='home'?f.home:f.away))+'</div></div><div><button data-fixture="'+esc(f.id)+'" onclick="loadLivePlayers(this.dataset.fixture)">Analizza partita</button></div></article>').join(''):'<div class="empty">Aggiorna il radar per caricare le partite.</div>';
+ status.textContent='Calendario filtrato: '+fixtures.length+' partite con quote 1X2 valide e soglia favorita rispettata.';
 }
 function setLiveSort(mode){
  liveSort=mode==='ga'?'ga':mode==='goal'?'goal':'best';
