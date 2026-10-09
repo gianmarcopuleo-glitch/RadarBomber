@@ -13,9 +13,25 @@ const LEAGUE_ALIASES = {
   'ligue 1':'ligue 1','french ligue 1':'ligue 1',
   'eredivisie':'eredivisie','dutch eredivisie':'eredivisie',
   'primeira liga':'primeira liga','liga portugal':'primeira liga','portuguese primeira liga':'primeira liga',
-  'super lig':'super lig','turkish super lig':'super lig',
+  'super lig':'super lig','turkish super lig':'super lig','super lig turkey':'super lig',
   'belgian pro league':'belgian pro league','pro league':'belgian pro league','jupiler pro league':'belgian pro league',
   'saudi pro league':'saudi pro league','saudi professional league':'saudi pro league',
+  'scottish premiership':'scottish premiership','scotland premiership':'scottish premiership',
+  'mls':'mls','major league soccer':'mls','usa major league soccer':'mls',
+  'brasileirao serie a':'brasileirao serie a','serie a brazil':'brasileirao serie a','campeonato brasileiro serie a':'brasileirao serie a',
+  'liga profesional':'liga profesional','argentina primera division':'liga profesional','primera division argentina':'liga profesional',
+  'greek super league':'greek super league','super league greece':'greek super league',
+  'austrian bundesliga':'austrian bundesliga','austria bundesliga':'austrian bundesliga',
+  'swiss super league':'swiss super league','super league switzerland':'swiss super league',
+  'danish superliga':'danish superliga','superliga denmark':'danish superliga',
+  'allsvenskan':'allsvenskan','swedish allsvenskan':'allsvenskan',
+  'eliteserien':'eliteserien','norwegian eliteserien':'eliteserien',
+  'ekstraklasa':'ekstraklasa','polish ekstraklasa':'ekstraklasa',
+  'czech first league':'czech first league','first league czech republic':'czech first league',
+  'croatian hnl':'croatian hnl','hnl':'croatian hnl',
+  'romanian liga i':'romanian liga i','liga i':'romanian liga i',
+  'j league':'j league','j1 league':'j league','japan j1 league':'j league',
+  'k league 1':'k league 1','k league 1 south korea':'k league 1',
   'uefa champions league':'uefa champions league','champions league':'uefa champions league',
   'uefa europa league':'uefa europa league','europa league':'uefa europa league',
   'uefa conference league':'uefa conference league','conference league':'uefa conference league',
@@ -37,11 +53,21 @@ const EXCLUDED_LEAGUE_NAMES = new Set([
   'segunda division portuguesa','liga portugal 2','serie b brasil',
   'brasileirao serie b','segunda division argentina','eerste divisie'
 ].map(normalize));
+const isExcludedLeague = n => !n ||
+  EXCLUDED_LEAGUE_NAMES.has(n) ||
+  /^(serie b|ligue 2|championship|segunda division|2 bundesliga|liga portugal 2|eerste divisie)( |$)/.test(n) ||
+  /\\b(women|womens|ladies|feminine|femenina|femenino|u ?(17|18|19|20|21|23)|youth|reserve|reserves|primavera|development league)\\b/.test(n);
+const isRecognizedCup = n =>
+  /\\b(cup|copa|coppa|coupe|pokal|beker|taça|taca|supercup|super cup|league cup|fa cup|knvb|dfb pokal|copa del rey|copa do brasil|coppa italia|coupe de france|copa argentina|scottish cup)\\b/.test(n) &&
+  !isExcludedLeague(n);
 const canonicalLeague = name => {
   const n = normalize(name);
-  if (!n || EXCLUDED_LEAGUE_NAMES.has(n) ||
-      /^(serie b|ligue 2|championship|segunda division|2 bundesliga|liga portugal 2|eerste divisie)( |$)/.test(n)) return null;
-  return LEAGUE_ALIASES[n] || null;
+  if (isExcludedLeague(n)) return null;
+  if (LEAGUE_ALIASES[n]) return LEAGUE_ALIASES[n];
+  // Accetta le principali coppe nazionali non elencate singolarmente nel catalogo,
+  // evitando competizioni femminili, giovanili e squadre riserve.
+  if (isRecognizedCup(n)) return n;
+  return null;
 };
 const allowed = name => canonicalLeague(name) !== null;
 const DOMESTIC_COUNTRY = {
@@ -54,7 +80,23 @@ const DOMESTIC_COUNTRY = {
   'primeira liga': { names:['portugal'], codes:['por','pt'] },
   'super lig': { names:['turkey','türkiye','turkiye'], codes:['tur','tr'] },
   'belgian pro league': { names:['belgium','belgië','belgie'], codes:['bel','be'] },
-  'saudi pro league': { names:['saudi arabia','saudi arabia'], codes:['ksa','sa'] }
+  'saudi pro league': { names:['saudi arabia'], codes:['ksa','sa'] },
+  'scottish premiership': { names:['scotland'], codes:['sco','sct'] },
+  'mls': { names:['usa','united states'], codes:['usa','us'] },
+  'brasileirao serie a': { names:['brazil','brasil'], codes:['bra','br'] },
+  'liga profesional': { names:['argentina'], codes:['arg','ar'] },
+  'greek super league': { names:['greece'], codes:['gre','gr'] },
+  'austrian bundesliga': { names:['austria'], codes:['aut','at'] },
+  'swiss super league': { names:['switzerland'], codes:['sui','ch'] },
+  'danish superliga': { names:['denmark'], codes:['den','dk'] },
+  'allsvenskan': { names:['sweden'], codes:['swe','se'] },
+  'eliteserien': { names:['norway'], codes:['nor','no'] },
+  'ekstraklasa': { names:['poland'], codes:['pol','pl'] },
+  'czech first league': { names:['czech republic','czechia'], codes:['cze','cz'] },
+  'croatian hnl': { names:['croatia'], codes:['cro','hr'] },
+  'romanian liga i': { names:['romania'], codes:['rou','ro'] },
+  'j league': { names:['japan'], codes:['jpn','jp'] },
+  'k league 1': { names:['south korea','korea republic'], codes:['kor','kr'] }
 };
 const allowedLeague = league => {
   if (!league) return false;
@@ -64,8 +106,6 @@ const allowedLeague = league => {
   if (!expected) return true;
   const country = normalize(league.country || '');
   const code = normalize(league.country_code || '');
-  // Alcuni endpoint restituiscono solo id e name: in quel caso il match verrà
-  // verificato contro il record completo della stessa lega nel catalogo.
   if (!country && !code) return true;
   return expected.names.some(c => normalize(c) === country) ||
     expected.codes.some(c => normalize(c) === code);
