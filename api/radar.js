@@ -139,6 +139,9 @@ const ODDS_SPORT_BY_LEAGUE = {
   'uefa europa league':'soccer_uefa_europa_league'
 };
 const oddsCache = new Map();
+const h2hCache = new Map();
+const h2hPlayerCache = new Map();
+const historicalLeagueCache = new Map();
 const oddsSportForLeague = name => ODDS_SPORT_BY_LEAGUE[normalize(name)];
 const teamKey = name => normalize(name)
   .replace(/\b(fc|cf|ac|sc|ssc|as|us|afc|cfc|calcio|club|de|the)\b/g,' ')
@@ -225,6 +228,56 @@ async function pitch(path) {
   return json.data ?? {};
 }
 const dateOnly = d => d.toISOString().slice(0, 10);
+const seasonBefore = (season, offset) => {
+  const s=String(season||'');
+  const range=s.match(/^(\d{4})\/(\d{4})$/);
+  if(range) return (Number(range[1])-offset)+'/'+(Number(range[2])-offset);
+  const year=Number(s);
+  return Number.isFinite(year) ? String(year-offset) : '';
+};
+async function cachedH2H(fixtureId) {
+  const cached=h2hCache.get(fixtureId);
+  if(cached && Date.now()-cached.at<6*60*60*1000) return cached.data;
+  const data=await pitch('/matches/'+encodeURIComponent(fixtureId)+'/h2h');
+  h2hCache.set(fixtureId,{at:Date.now(),data});
+  return data;
+}
+async function cachedMatchPlayers(matchId) {
+  const cached=h2hPlayerCache.get(matchId);
+  if(cached && Date.now()-cached.at<24*60*60*1000) return cached.players;
+  const players=await pitch('/matches/'+encodeURIComponent(matchId)+'/players');
+  const list=Array.isArray(players)?players:[];
+  h2hPlayerCache.set(matchId,{at:Date.now(),players:list});
+  return list;
+}
+async function historicalMatchesForLeague(leagueId, season) {
+  if(!leagueId || !season) return [];
+  const seasons=[1,2,3].map(offset=>seasonBefore(season,offset)).filter(Boolean);
+  const key=String(leagueId)+':'+seasons.join(',');
+  const cached=historicalLeagueCache.get(key);
+  if(cached && Date.now()-cached.at<12*60*60*1000) return cached.matches;
+  const results=await Promise.all(seasons.map(async s=>{
+    try {
+      const data=await pitch('/leagues/'+encodeURIComponent(leagueId)+'/matches?season='+encodeURIComponent(s)+'&status=all');
+      return (data.matches||[]).map(m=>({...m,leagueName:data.league&&data.league.name||'',_season:s}));
+    } catch { return []; }
+  }));
+  const matches=[...new Map(results.flat().filter(m=>m&&m.id).map(m=>[String(m.id),m])).values()];
+  historicalLeagueCache.set(key,{at:Date.now(),matches});
+  return matches;
+}
+function matchDateKey(m) {
+  const value=m && (m.date || m.time_utc || m.kickoff || '');
+  if(!value) return '';
+  const parsed=Date.parse(String(value));
+  return Number.isFinite(parsed)?new Date(parsed).toISOString().slice(0,10):String(value).slice(0,10);
+}
+function matchTeams(m) {
+  return {
+    home:String(m && (m.home_team&&m.home_team.id || m.home&&m.home.id) || ''),
+    away:String(m && (m.away_team&&m.away_team.id || m.away&&m.away.id) || '')
+  };
+}
 function getStat(player, statKey) {
   for (const group of (player.stats || [])) {
     const stats = group.stats || {};
@@ -299,8 +352,8 @@ module.exports = async function handler(req, res) {
     // Se il provider quote non è disponibile, l'analisi statistica continua senza bonus.
     let matchOdds = null;
     try { matchOdds = await oddsForFixture(fixture); } catch {}
-    const homeOdds = matchOdds && Number.isFinite(matchOdds.homeOdds) ? matchOdds.homeOdds : null;
-    const awayOdds = matchOdds && Number.isFinite(matchOdds.awayOdds) ? matchOdds.awayOdds : null;
+    const homeOdds = matchOdds && Number.isFinite(Number(matchOdds.homeOdds)) ? Number(matchOdds.homeOdds) : null;
+    const awayOdds = matchOdds && Number.isFinite(Number(matchOdds.awayOdds)) ? Number(matchOdds.awayOdds) : null;
     const oddsAvailable = homeOdds !== null && awayOdds !== null;
     const oddsSideScore = odds => odds == null ? 0 : odds <= 1.50 ? 92 : odds <= 1.75 ? 82 : odds <= 2.00 ? 72 : odds <= 2.50 ? 60 : odds <= 3.25 ? 45 : 30;
     const home = fixture.home_team || {};
@@ -370,6 +423,65 @@ module.exports = async function handler(req, res) {
     }));
     const allMatches = [...new Map(leagueResults.flat().map(m => [m.id,m])).values()];
     const targetDate = String(fixture.date || date);
+    // Head-to-head reale: storico dei confronti diretti e statistiche individuali recuperabili.
+    let h2hMatches=[], h2hPlayerResults=[];
+    try {
+      const h2hData=await cachedH2H(fixtureId);
+      const rawH2H=(Array.isArray(h2hData.recent_matches)?h2hData.recent_matches:[])
+        .filter(m=>m && (m.finished===true || (m.score_home!=null && m.score_away!=null)))
+        .sort((a,b)=>matchDateKey(b).localeCompare(matchDateKey(a)))
+        .slice(0,5);
+      const leagueSeason=leagues.find(l=>String(l.id)===String(fixture.league&&fixture.league.id));
+      const seasonMatches=await historicalMatchesForLeague(
+        fixture.league&&fixture.league.id,
+        leagueSeason&&leagueSeason.season
+      );
+      const matchPool=[...new Map([...allMatches,...seasonMatches].filter(m=>m&&m.id).map(m=>[String(m.id),m])).values()];
+      h2hMatches=rawH2H.map(h=>{
+        const ht=String(h.home&&h.home.id || h.home_team&&h.home_team.id || '');
+        const at=String(h.away&&h.away.id || h.away_team&&h.away_team.id || '');
+        const dateKey=matchDateKey(h);
+        const directId=String(h.id||h.match_id||h.fixture_id||'');
+        let found=directId?matchPool.find(m=>String(m.id)===directId):null;
+        if(!found && ht && at && dateKey) {
+          found=matchPool.find(m=>{
+            const teams=matchTeams(m);
+            return ((teams.home===ht&&teams.away===at)||(teams.home===at&&teams.away===ht)) &&
+              matchDateKey(m)===dateKey;
+          });
+        }
+        return {...h,_resolvedMatch:found||null,_matchId:directId||(found&&String(found.id))||''};
+      });
+      const resolved=h2hMatches.filter(m=>m._matchId);
+      h2hPlayerResults=await Promise.all(resolved.map(async m=>{
+        try { return {match:m,players:await cachedMatchPlayers(m._matchId)}; }
+        catch { return {match:m,players:[]}; }
+      }));
+    } catch {}
+    const h2hByPlayerId=new Map(), h2hByPlayerName=new Map();
+    for(const result of h2hPlayerResults) {
+      const seen=new Set();
+      for(const row of result.players||[]) {
+        const pl=row.player||{}, tid=String(row.team_id||'');
+        if(!pl.name || (tid!==homeId&&tid!==awayId)) continue;
+        const idKey=tid+':'+String(pl.id||'');
+        const nameKey=tid+':'+normalize(pl.name);
+        const uniqueKey=idKey+':'+nameKey;
+        if(seen.has(uniqueKey)) continue;
+        seen.add(uniqueKey);
+        const goals=getStat(row,'goals'), assists=getStat(row,'assists');
+        const add=(map,key)=>{
+          if(!key || key.endsWith(':')) return;
+          if(!map.has(key))map.set(key,{appearances:0,goalMatches:0,gaMatches:0,goals:0,assists:0});
+          const entry=map.get(key);
+          entry.appearances++;
+          entry.goals+=goals; entry.assists+=assists;
+          if(goals>0)entry.goalMatches++;
+          if(goals+assists>0)entry.gaMatches++;
+        };
+        add(h2hByPlayerId,idKey); add(h2hByPlayerName,nameKey);
+      }
+    }
     const targetMs = Date.parse(targetDate + 'T23:59:59Z');
     const earliestMs = targetMs - 65 * 24 * 60 * 60 * 1000;
     const recentFor = teamId => allMatches
@@ -481,6 +593,15 @@ module.exports = async function handler(req, res) {
         const shotsPer90=shots/minutes*90;
         const onTargetPer90=shotsOnTarget/minutes*90;
         const conversion=shots>0?p.goals/shots:0;
+        const h2hStats=h2hByPlayerId.get(p.teamId+':'+String(p.id)) ||
+          h2hByPlayerName.get(p.teamId+':'+normalize(p.name)) ||
+          {appearances:0,goalMatches:0,gaMatches:0,goals:0,assists:0};
+        const h2hGoalScore=h2hStats.appearances
+          ? rateScore(h2hStats.goalMatches/h2hStats.appearances,1)
+          : 50;
+        const h2hGaScore=h2hStats.appearances
+          ? rateScore(h2hStats.gaMatches/h2hStats.appearances,1)
+          : 50;
         const ownForm=teamForm.get(p.teamId)||{games:0,goalsFor:0,goalsAgainst:0,xgFor:0,xgAgainst:0,xgMatches:0};
         const opponentId=p.teamId===homeId?awayId:homeId;
         const oppForm=teamForm.get(opponentId)||{games:0,goalsFor:0,goalsAgainst:0,xgFor:0,xgAgainst:0,xgMatches:0};
@@ -494,7 +615,7 @@ module.exports = async function handler(req, res) {
           finishing:rateScore(conversion,0.35),
           teamAttack:rateScore(attackMetric,2.5),
           opponentDefense:rateScore(defenseMetric,2.2),
-          homeAdvantage:p.teamId===homeId?100:0,
+          homeAdvantage:p.teamId===homeId?100:35,
           minutes:rateScore(minutes/Math.max(1,p.appearances),90)
         };
         const gaComponents={
@@ -510,18 +631,19 @@ module.exports = async function handler(req, res) {
           minutes:rateScore(minutes/Math.max(1,p.appearances),90)
         };
         const teamOdds = p.teamId===homeId ? homeOdds : awayOdds;
-        const matchOddsScore = oddsAvailable ? oddsSideScore(teamOdds) : 0;
+        // Se mancano quote, usiamo un valore neutro: l'assenza del dato non penalizza il candidato.
+        const matchOddsScore = oddsAvailable ? oddsSideScore(teamOdds) : 50;
         const goalIndex=weighted([
-          [goalComponents.recentGoals,20],[goalComponents.expectedGoals,22],[goalComponents.shotVolume,16],
-          [goalComponents.shotsOnTarget,10],[goalComponents.finishing,8],[goalComponents.teamAttack,6],
-          [goalComponents.opponentDefense,6],[goalComponents.homeAdvantage,2],[goalComponents.minutes,2],
-          [matchOddsScore,8]
+          [goalComponents.recentGoals,16],[goalComponents.expectedGoals,19],[goalComponents.shotVolume,13],
+          [goalComponents.shotsOnTarget,8],[goalComponents.finishing,6],[goalComponents.teamAttack,6],
+          [goalComponents.opponentDefense,6],[goalComponents.homeAdvantage,8],[goalComponents.minutes,3],
+          [matchOddsScore,5],[h2hGoalScore,10]
         ]);
         const gaIndex=weighted([
-          [gaComponents.goalContributions,15],[gaComponents.expectedGoals,18],[gaComponents.shotVolume,13],
-          [gaComponents.shotsOnTarget,10],[gaComponents.assists,14],[gaComponents.chanceCreation,8],
-          [gaComponents.teamAttack,5],[gaComponents.opponentDefense,6],[gaComponents.homeAdvantage,2],[gaComponents.minutes,1],
-          [matchOddsScore,8]
+          [gaComponents.goalContributions,13],[gaComponents.expectedGoals,16],[gaComponents.shotVolume,11],
+          [gaComponents.shotsOnTarget,8],[gaComponents.assists,12],[gaComponents.chanceCreation,7],
+          [gaComponents.teamAttack,5],[gaComponents.opponentDefense,6],[gaComponents.homeAdvantage,8],[gaComponents.minutes,2],
+          [matchOddsScore,4],[h2hGaScore,8]
         ]);
         // Probabilità evento: conversione Poisson da tassi individuali regolarizzati.
         // La regolarizzazione riduce l'effetto di campioni piccoli; non sostituisce una calibrazione storica.
@@ -538,14 +660,20 @@ module.exports = async function handler(req, res) {
         // Bonus modéré des cotes 1X2 : le favori à domicile reçoit un poids supplémentaire,
         // sans transformer une cote d'équipe en probabilité individuelle de marquer.
         const oddsFactor = !oddsAvailable ? 1 : teamOdds<=1.50 ? (p.teamId===homeId?1.12:1.06) : teamOdds<=1.75 ? (p.teamId===homeId?1.10:1.05) : teamOdds<=2.00 ? (p.teamId===homeId?1.08:1.04) : teamOdds<=2.50 ? 1.04 : 1.00;
+        const venueFactor=p.teamId===homeId?1.14:1.04;
+        const h2hGoalRate=h2hStats.appearances?h2hStats.goalMatches/h2hStats.appearances:0;
+        const h2hGaRate=h2hStats.appearances?h2hStats.gaMatches/h2hStats.appearances:0;
+        const h2hGoalFactor=1+Math.min(0.12,h2hGoalRate*0.12);
+        const h2hGaFactor=1+Math.min(0.10,h2hGaRate*0.10);
         const matchOddsContext = {homeOdds,awayOdds,teamOdds,favorite:matchOdds?.favorite||null,bookmakersCount:matchOdds?.bookmakersCount||0,score:matchOddsScore,factor:oddsFactor};
+        const headToHeadContext = {matches:h2hMatches.length,playerMatches:h2hStats.appearances,goalMatches:h2hStats.goalMatches,gaMatches:h2hStats.gaMatches,goals:h2hStats.goals,assists:h2hStats.assists,goalRate:Number(h2hGoalRate.toFixed(2)),gaRate:Number(h2hGaRate.toFixed(2)),goalFactor:h2hGoalFactor,gaFactor:h2hGaFactor};
         const expectedMinutes=Math.max(0,Math.min(90,
           lineupConfirmed?Math.max(65,Math.min(85,minutes/Math.max(1,appearances))):
           lineupAvailable?Math.max(55,Math.min(78,minutes/Math.max(1,appearances))):
           Math.max(45,Math.min(72,minutes/Math.max(1,appearances)))
         ));
-        const goalProbability=poissonPercent(goalBaseRate*expectedMinutes/90*contextFactor*oddsFactor);
-        const gaProbability=poissonPercent(gaBaseRate*expectedMinutes/90*contextFactor*oddsFactor);
+        const goalProbability=poissonPercent(goalBaseRate*expectedMinutes/90*contextFactor*oddsFactor*venueFactor*h2hGoalFactor);
+        const gaProbability=poissonPercent(gaBaseRate*expectedMinutes/90*contextFactor*oddsFactor*venueFactor*h2hGaFactor);
         const confidenceScore=Math.round(Math.min(100,
           20+Math.min(5,appearances)*8+(lineupConfirmed?25:lineupAvailable?10:0)+
           (p.minutes>0?10:0)+(shotDataAvailable||p.statsXg>0?17:0)+(shotsOnTarget>0?8:0)
@@ -561,18 +689,19 @@ module.exports = async function handler(req, res) {
           shots:Number(shots.toFixed(1)),shotsOnTarget:Number(shotsOnTarget.toFixed(1)),xg:Number(xg.toFixed(2)),
           minutes:Number(minutes.toFixed(0)),minutesEstimated:!(p.minutes>0),
           teamXgPerMatch:Number(attackMetric.toFixed(2)),opponentXgaPerMatch:Number(defenseMetric.toFixed(2)),
-          goalComponents,gaComponents,goalIndex,gaIndex,matchOddsContext,
+          goalComponents,gaComponents,goalIndex,gaIndex,matchOddsContext,headToHeadContext,venueFactor,
           goalProbability,gaProbability,confidenceScore,eligibleForBet,expectedMinutes,
-          probabilityModel:'poisson-shrunk-v1'
+          probabilityModel:'poisson-shrunk-v2-h2h-home'
         };
       })
       .sort((a,b)=>Math.max(b.goalProbability||0,b.gaProbability||0)-Math.max(a.goalProbability||0,a.gaProbability||0) || Math.max(b.goalIndex,b.gaIndex)-Math.max(a.goalIndex,a.gaIndex));
     const diagnostics = [];
     if (homeRecent.length<5 || awayRecent.length<5) diagnostics.push('Campione recente incompleto: ultime gare trovate casa='+homeRecent.length+', ospite='+awayRecent.length+'.');
     if (!uniqueMatches.length) diagnostics.push('Non sono state trovate partite concluse recenti per entrambe le squadre nei campionati coperti.');
-    diagnostics.push('Fonte: PitchAPI. Indici multi-fattoriali: gol/assist e minuti recenti, tiri, tiri in porta, xG, creazione occasioni, rendimento offensivo della squadra, vulnerabilità avversaria e piccolo aggiustamento casa. Le quote 1X2 medie disponibili ricevono un peso moderato come indicatore di forza della squadra, con bonus aggiuntivo contenuto per il favorito in casa; non sono quote del mercato marcatore. I valori mancanti non vengono inventati; minuti stimati solo se il provider non li riporta. Indici comparativi, non probabilità calibrate.');
+    diagnostics.push('Precedenti diretti: '+h2hMatches.length+' partite trovate, '+h2hPlayerResults.filter(r=>(r.players||[]).length>0).length+' con statistiche individuali recuperabili.');
+    diagnostics.push('Fonte: PitchAPI. Il modello combina rendimento recente, tiri/xG, attacco squadra, difesa avversaria, quote 1X2, vantaggio casa più marcato (coefficiente 1,14 contro 1,04 in trasferta) e precedenti diretti individuali. I bonus H2H sono limitati e applicati solo se i dati del giocatore sono disponibili; non sono probabilità calibrate. Quote 1X2 non sono quote del mercato marcatore. I valori mancanti non vengono inventati; minuti stimati solo se il provider non li riporta.');
     const message = players.length
-      ? 'Quote delle squadre ignorate. Giocatori selezionati da entrambe le squadre. '+(lineupConfirmed
+      ? 'Analisi di entrambe le squadre con coefficiente casa/trasferta e precedenti diretti. '+(lineupConfirmed
           ? 'Formazione ufficiale pubblicata: sono mostrati i titolari ufficiali.'
           : lineupAvailable
             ? 'Formazione probabile disponibile: i candidati sono limitati ai titolari previsti.'
@@ -580,7 +709,7 @@ module.exports = async function handler(req, res) {
       : 'Nessun giocatore con gol o assist rilevati nelle ultime partite concluse disponibili per questa gara. ' + diagnostics.join(' | ');
     // L'analisi non va memorizzata a lungo: rose e formazioni possono cambiare.
     res.setHeader('Cache-Control','no-store, max-age=0');
-    return res.status(200).json({message,diagnostics,matchOdds:{available:oddsAvailable,homeOdds,awayOdds,favorite:matchOdds?.favorite||null,bookmakersCount:matchOdds?.bookmakersCount||0},model:'poisson-shrunk-v1+multifactor-odds-v2',weights:{goal:{recentGoals:20,xG:22,shots:16,shotsOnTarget:10,finishing:8,teamAttack:6,opponentDefense:6,homeAdvantage:2,minutes:2,matchOdds:8},goalAssist:{goalContributions:15,xG:18,shots:13,shotsOnTarget:10,assists:14,chanceCreation:8,teamAttack:5,opponentDefense:6,homeAdvantage:2,minutes:1,matchOdds:8}},teamContext:{home:teamForm.get(homeId),away:teamForm.get(awayId)},players:players.slice(0,24)});
+    return res.status(200).json({message,diagnostics,matchOdds:{available:oddsAvailable,homeOdds,awayOdds,favorite:matchOdds?.favorite||null,bookmakersCount:matchOdds?.bookmakersCount||0},headToHead:{matches:h2hMatches.length,playerStatsMatches:h2hPlayerResults.filter(r=>(r.players||[]).length>0).length,results:h2hMatches.map(m=>({date:matchDateKey(m),home:m.home&&m.home.name||m.home_team&&m.home_team.name||'',away:m.away&&m.away.name||m.away_team&&m.away_team.name||'',scoreHome:m.score_home,scoreAway:m.score_away,playerStatsAvailable:h2hPlayerResults.some(r=>String(r.match._matchId)===String(m._matchId)&&(r.players||[]).length>0)}))},model:'poisson-shrunk-v2-h2h-home',weights:{goal:{recentGoals:16,xG:19,shots:13,shotsOnTarget:8,finishing:6,teamAttack:6,opponentDefense:6,homeAdvantage:8,minutes:3,matchOdds:5,headToHead:10},goalAssist:{goalContributions:13,xG:16,shots:11,shotsOnTarget:8,assists:12,chanceCreation:7,teamAttack:5,opponentDefense:6,homeAdvantage:8,minutes:2,matchOdds:4,headToHead:8}},teamContext:{home:teamForm.get(homeId),away:teamForm.get(awayId)},players:players.slice(0,24)});
   } catch (error) {
     res.setHeader('Cache-Control','no-store, max-age=0');
     const status = error.status || 502;
