@@ -2,31 +2,48 @@
 const BASE = 'https://api.pitchapi.dev/v1';
 // Competizioni richieste dall'utente. I nomi sono normalizzati per tollerare
 // differenze di accenti e punteggiatura restituite dal provider.
-const LEAGUE_PRIORITY = [
-  // Campionati nazionali: il catalogo PitchAPI e il Paese evitano omonimie.
-  'Serie A','Premier League','La Liga','Bundesliga','Ligue 1',
-  'Eredivisie','Primeira Liga','Liga Portugal',
-  // Solo competizioni UEFA identificate esplicitamente.
-  'UEFA Champions League','UEFA Europa League','UEFA Conference League',
-  'UEFA Nations League','European Championship','UEFA Euro','Europei',
-  'FIFA World Cup','World Cup','Mondiali',
-  'UEFA European Qualifiers','European Qualifiers',
-  'World Cup Qualification Europe','UEFA World Cup Qualifiers'
-];
 const normalize = s => String(s || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-// Blocco esplicito delle seconde divisioni e dei campionati inferiori:
- // protegge anche da alias o traduzioni restituiti dal provider.
+// Alias comuni restituiti dai cataloghi calcistici. La selezione si basa sul
+// catalogo ufficiale delle leghe, non sui metadati parziali dell'evento giornaliero.
+const LEAGUE_ALIASES = {
+  'serie a':'serie a','italian serie a':'serie a',
+  'premier league':'premier league','english premier league':'premier league',
+  'la liga':'la liga','laliga':'la liga','spanish la liga':'la liga',
+  'bundesliga':'bundesliga','german bundesliga':'bundesliga',
+  'ligue 1':'ligue 1','french ligue 1':'ligue 1',
+  'eredivisie':'eredivisie','dutch eredivisie':'eredivisie',
+  'primeira liga':'primeira liga','liga portugal':'primeira liga','portuguese primeira liga':'primeira liga',
+  'super lig':'super lig','turkish super lig':'super lig',
+  'belgian pro league':'belgian pro league','pro league':'belgian pro league','jupiler pro league':'belgian pro league',
+  'saudi pro league':'saudi pro league','saudi professional league':'saudi pro league',
+  'uefa champions league':'uefa champions league','champions league':'uefa champions league',
+  'uefa europa league':'uefa europa league','europa league':'uefa europa league',
+  'uefa conference league':'uefa conference league','conference league':'uefa conference league',
+  'uefa nations league':'uefa nations league','nations league':'uefa nations league',
+  'european championship':'european championship','uefa euro':'european championship','europei':'european championship',
+  'fifa world cup':'fifa world cup','world cup':'fifa world cup','mondiali':'fifa world cup',
+  'uefa european qualifiers':'uefa european qualifiers','european qualifiers':'uefa european qualifiers',
+  'world cup qualification europe':'world cup qualification europe','uefa world cup qualifiers':'world cup qualification europe'
+};
+const LEAGUE_PRIORITY = [
+  'Serie A','Premier League','La Liga','Bundesliga','Ligue 1',
+  'Eredivisie','Primeira Liga','Süper Lig','Belgian Pro League','Saudi Pro League',
+  'UEFA Champions League','UEFA Europa League','UEFA Conference League',
+  'UEFA Nations League','European Championship','FIFA World Cup',
+  'UEFA European Qualifiers','World Cup Qualification Europe'
+];
 const EXCLUDED_LEAGUE_NAMES = new Set([
   'serie b','ligue 2','championship','segunda division','2 bundesliga',
-  '2 bundesliga','segunda division portuguesa','liga portugal 2',
-  'serie b brasil','brasileirao serie b','segunda division argentina'
+  'segunda division portuguesa','liga portugal 2','serie b brasil',
+  'brasileirao serie b','segunda division argentina','eerste divisie'
 ].map(normalize));
-const allowed = name => {
+const canonicalLeague = name => {
   const n = normalize(name);
-  if (!n || EXCLUDED_LEAGUE_NAMES.has(n)) return false;
-  if (/^(serie b|ligue 2|championship|segunda division|2 bundesliga)( |$)/.test(n)) return false;
-  return LEAGUE_PRIORITY.some(x => normalize(x) === n);
+  if (!n || EXCLUDED_LEAGUE_NAMES.has(n) ||
+      /^(serie b|ligue 2|championship|segunda division|2 bundesliga|liga portugal 2|eerste divisie)( |$)/.test(n)) return null;
+  return LEAGUE_ALIASES[n] || null;
 };
+const allowed = name => canonicalLeague(name) !== null;
 const DOMESTIC_COUNTRY = {
   'serie a': { names:['italy','italia'], codes:['ita','it'] },
   'premier league': { names:['england','inghilterra'], codes:['eng','gb-eng'] },
@@ -35,16 +52,21 @@ const DOMESTIC_COUNTRY = {
   'ligue 1': { names:['france','francia'], codes:['fra','fr'] },
   'eredivisie': { names:['netherlands','the netherlands','paesi bassi','holland'], codes:['ned','nld','nl'] },
   'primeira liga': { names:['portugal'], codes:['por','pt'] },
-  'liga portugal': { names:['portugal'], codes:['por','pt'] }
+  'super lig': { names:['turkey','türkiye','turkiye'], codes:['tur','tr'] },
+  'belgian pro league': { names:['belgium','belgië','belgie'], codes:['bel','be'] },
+  'saudi pro league': { names:['saudi arabia','saudi arabia'], codes:['ksa','sa'] }
 };
 const allowedLeague = league => {
-  if (!league || !allowed(league.name)) return false;
-  const expected = DOMESTIC_COUNTRY[normalize(league.name)];
+  if (!league) return false;
+  const canonical = canonicalLeague(league.name);
+  if (!canonical) return false;
+  const expected = DOMESTIC_COUNTRY[canonical];
   if (!expected) return true;
-  // PitchAPI's documented league catalogue supplies country_code, not country.
-  // Accept either field so the allowlist works with both catalogue and fixture shapes.
   const country = normalize(league.country || '');
   const code = normalize(league.country_code || '');
+  // Alcuni endpoint restituiscono solo id e name: in quel caso il match verrà
+  // verificato contro il record completo della stessa lega nel catalogo.
+  if (!country && !code) return true;
   return expected.names.some(c => normalize(c) === country) ||
     expected.codes.some(c => normalize(c) === code);
 };
@@ -175,16 +197,22 @@ module.exports = async function handler(req, res) {
       // Convalidiamo le competizioni con il catalogo ufficiale: il solo nome
       // non basta e può includere campionati omonimi o non pertinenti.
       const leagueCatalog = await pitch('/leagues');
+      const catalogLeagues = Array.isArray(leagueCatalog.leagues) ? leagueCatalog.leagues : [];
+      const catalogById = new Map(catalogLeagues.filter(l=>l.id!=null).map(l=>[String(l.id),l]));
       const supportedLeagueIds = new Set(
-        (leagueCatalog.leagues || [])
-          .filter(allowedLeague)
-          .filter(l => l.id != null)
-          .map(l => String(l.id))
+        catalogLeagues.filter(allowedLeague).filter(l=>l.id!=null).map(l=>String(l.id))
       );
+      // L'endpoint /date può restituire una league con soli id e name. Per non
+      // scartare Premier League, La Liga ecc. usiamo country_code e nome completi
+      // dal catalogo /leagues associato allo stesso ID.
       const eligibleMatches = matches
-        .filter(m => allowedLeague(m.league) &&
-          m.league && m.league.id != null &&
-          supportedLeagueIds.has(String(m.league.id)));
+        .map(m=>{
+          const id=m.league && m.league.id!=null ? String(m.league.id) : '';
+          const catalogLeague=catalogById.get(id);
+          return catalogLeague ? {...m,league:catalogLeague} : m;
+        })
+        .filter(m => m.league && m.league.id != null &&
+          supportedLeagueIds.has(String(m.league.id)) && allowedLeague(m.league));
       const fixtures = eligibleMatches
         .map(m=>({
           id:String(m.id),
@@ -195,12 +223,16 @@ module.exports = async function handler(req, res) {
           status:m.status||'In programma'
         }))
         .sort((a,b)=>{
-          const pa=LEAGUE_PRIORITY.findIndex(x=>normalize(x)===normalize(a.league));
-          const pb=LEAGUE_PRIORITY.findIndex(x=>normalize(x)===normalize(b.league));
+          const pa=LEAGUE_PRIORITY.findIndex(x=>canonicalLeague(x)===canonicalLeague(a.league));
+          const pb=LEAGUE_PRIORITY.findIndex(x=>canonicalLeague(x)===canonicalLeague(b.league));
           return (pa<0?999:pa)-(pb<0?999:pb);
         })
-        .slice(0,24);
-      const diagnostics={date,providerFixtures:matches.length,eligibleFixtures:eligibleMatches.length,qualifyingFixtures:fixtures.length};
+        .slice(0,60);
+      const leagueCounts={};
+      for(const m of matches){const n=m.league&&m.league.name||'Senza competizione';leagueCounts[n]=(leagueCounts[n]||0)+1;}
+      const eligibleLeagueCounts={};
+      for(const m of eligibleMatches){const n=m.league&&m.league.name||'Senza competizione';eligibleLeagueCounts[n]=(eligibleLeagueCounts[n]||0)+1;}
+      const diagnostics={date,providerFixtures:matches.length,catalogLeagues:catalogLeagues.length,eligibleFixtures:eligibleMatches.length,qualifyingFixtures:fixtures.length,providerLeagueCounts:leagueCounts,eligibleLeagueCounts};
       const message=fixtures.length
         ? 'Partite filtrate per competizioni ammesse. Le quote delle squadre non vengono utilizzate: saranno analizzati i giocatori di entrambe le squadre.'
         : 'Nessuna partita delle competizioni selezionate risulta disponibile su PitchAPI per questa data. Prova un altro giorno.';
