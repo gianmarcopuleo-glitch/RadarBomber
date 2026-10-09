@@ -105,7 +105,7 @@ async function loadLivePlayers(fixtureId){
  }catch(e){status.textContent='Impossibile analizzare questa partita: '+e.message;out.innerHTML='<div class="empty">Controlla la configurazione della fonte dati e riprova.</div>'}
 }
 function showLiveFixtures(){
- const out=document.getElementById('liveMatches');
+ const out=document.getElementById('liveMatches'),status=document.getElementById('liveStatus');
  if(!out)return;
  const fixtures=window.liveFixtureDetails||[];
  livePlayersData=[];
