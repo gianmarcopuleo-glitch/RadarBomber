@@ -3,27 +3,42 @@ const BASE = 'https://api.pitchapi.dev/v1';
 // Competizioni richieste dall'utente. I nomi sono normalizzati per tollerare
 // differenze di accenti e punteggiatura restituite dal provider.
 const LEAGUE_PRIORITY = [
-  // Campionati nazionali prioritari
+  // Campionati nazionali: il catalogo PitchAPI e il Paese evitano omonimie.
   'Serie A','Premier League','La Liga','Bundesliga','Ligue 1',
   'Eredivisie','Primeira Liga','Liga Portugal','Saudi Pro League',
-  'Saudi Pro League Roshn Saudi League','Super Lig','Süper Lig',
+  'Roshn Saudi League','Super Lig','Süper Lig',
   'Belgian Pro League','Jupiler Pro League',
-  // Coppe europee per club
-  'UEFA Champions League','Champions League',
-  'UEFA Europa League','Europa League',
-  'UEFA Conference League','Conference League',
-  // Nazionali: tornei e qualificazioni europee.
-  // Escludiamo le competizioni sudamericane e le qualificazioni mondiali
-  // senza indicazione geografica, che possono includere CONMEBOL.
-  'UEFA Nations League','Nations League',
-  'European Championship','UEFA Euro','Europei',
+  // Solo competizioni UEFA identificate esplicitamente.
+  'UEFA Champions League','UEFA Europa League','UEFA Conference League',
+  'UEFA Nations League','European Championship','UEFA Euro','Europei',
   'FIFA World Cup','World Cup','Mondiali',
   'UEFA European Qualifiers','European Qualifiers',
   'World Cup Qualification Europe','UEFA World Cup Qualifiers'
 ];
-const ALLOWED_LEAGUES = LEAGUE_PRIORITY;
-const normalize = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-const allowed = name => ALLOWED_LEAGUES.some(x => normalize(x) === normalize(name));
+const normalize = s => String(s || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const allowed = name => LEAGUE_PRIORITY.some(x => normalize(x) === normalize(name));
+const DOMESTIC_COUNTRY = {
+  'serie a':['italy','italia'],
+  'premier league':['england','inghilterra'],
+  'la liga':['spain','spagna'],
+  'bundesliga':['germany','germania'],
+  'ligue 1':['france','francia'],
+  'eredivisie':['netherlands','the netherlands','paesi bassi','holland'],
+  'primeira liga':['portugal'],
+  'liga portugal':['portugal'],
+  'saudi pro league':['saudi arabia','arabia saudita'],
+  'roshn saudi league':['saudi arabia','arabia saudita'],
+  'super lig':['turkey','türkiye','turchia'],
+  'belgian pro league':['belgium','belgio'],
+  'jupiler pro league':['belgium','belgio']
+};
+const allowedLeague = league => {
+  if (!league || !allowed(league.name)) return false;
+  const expected = DOMESTIC_COUNTRY[normalize(league.name)];
+  if (!expected) return true;
+  const country = normalize(league.country || '');
+  return expected.some(c => normalize(c) === country);
+};
 const indexFromRecent = (goals, assists, games, kind) => {
   if (!games) return 0;
   const perMatch = (kind === 'goal' ? goals : goals + assists) / games;
@@ -71,8 +86,19 @@ module.exports = async function handler(req, res) {
     if (!req.query.fixture) {
       const result = await pitch('/date/' + encodeURIComponent(date) + '?status=upcoming');
       const matches = Array.isArray(result.matches) ? result.matches : [];
+      // Convalidiamo le competizioni con il catalogo ufficiale: il solo nome
+      // non basta e può includere campionati omonimi o non pertinenti.
+      const leagueCatalog = await pitch('/leagues');
+      const supportedLeagueIds = new Set(
+        (leagueCatalog.leagues || [])
+          .filter(allowedLeague)
+          .filter(l => l.id != null)
+          .map(l => String(l.id))
+      );
       const fixtures = matches
-        .filter(m => allowed(m.league && m.league.name))
+        .filter(m => allowed(m.league && m.league.name) &&
+          m.league && m.league.id != null &&
+          supportedLeagueIds.has(String(m.league.id)))
         .sort((a,b) => {
           const pa = LEAGUE_PRIORITY.findIndex(x => normalize(x) === normalize(a.league && a.league.name));
           const pb = LEAGUE_PRIORITY.findIndex(x => normalize(x) === normalize(b.league && b.league.name));
@@ -121,7 +147,14 @@ module.exports = async function handler(req, res) {
         String(lineupData.away_team && lineupData.away_team.id || '') === awayId;
       const homeStarters = lineupData.home && Array.isArray(lineupData.home.starters) ? lineupData.home.starters : [];
       const awayStarters = lineupData.away && Array.isArray(lineupData.away.starters) ? lineupData.away.starters : [];
-      if (lineupTeamsMatch && homeStarters.length && awayStarters.length) {
+      const homeConfirmed = lineupData.home && lineupData.home.confirmed === true;
+      const awayConfirmed = lineupData.away && lineupData.away.confirmed === true;
+      const homeType = normalize(lineupData.home && lineupData.home.lineup_type || '');
+      const awayType = normalize(lineupData.away && lineupData.away.lineup_type || '');
+      // "lastStarting11" è l'ultimo undici noto, non una previsione della partita.
+      const onlyLastKnownXI = !homeConfirmed && !awayConfirmed &&
+        homeType === 'laststarting11' && awayType === 'laststarting11';
+      if (lineupTeamsMatch && homeStarters.length && awayStarters.length && !onlyLastKnownXI) {
         for (const [side, teamId] of [[homeStarters, homeId], [awayStarters, awayId]]) {
           for (const p of side) {
             if (p && p.player_id) {
@@ -225,7 +258,7 @@ module.exports = async function handler(req, res) {
           ? 'Formazione ufficiale pubblicata: elenco limitato ai titolari ufficiali.'
           : 'Formazione probabile: elenco provvisorio dei titolari previsti, aggiornabile quando PitchAPI pubblica gli undici ufficiali.') + ' ' + diagnostics.join(' | ')
       : !lineupAvailable
-        ? 'PitchAPI non ha ancora fornito una formazione utilizzabile per questa partita. Riprova più vicino al calcio d’inizio.'
+        ? 'PitchAPI non ha ancora fornito una formazione attuale utilizzabile per questa partita. Se il provider restituisce solo l’ultimo undici noto, i nomi vengono esclusi per evitare giocatori vecchi; riprova quando pubblica una formazione aggiornata.'
         : (lineupConfirmed
           ? 'Nessun titolare ufficiale ha gol o assist rilevati nelle partite recenti disponibili. '
           : 'Nessun titolare probabile ha gol o assist rilevati nelle partite recenti disponibili. ') + diagnostics.join(' | ');
