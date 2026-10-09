@@ -53,16 +53,13 @@ module.exports = async function handler(req, res) {
       if (req.query.date) {
         fixtures = await api('/fixtures?date=' + encodeURIComponent(date) + '&timezone=Europe%2FRome');
       } else {
-        // First use API-Football's next-fixtures shortcut. Some plan/provider responses
-        // can return an empty list here, so retry with an explicit date range.
-        fixtures = await api('/fixtures?next=50&timezone=Europe%2FRome');
-        if (!fixtures.length) {
-          const end = new Date(date + 'T12:00:00Z');
-          end.setUTCDate(end.getUTCDate() + 14);
-          const to = end.toISOString().slice(0, 10);
-          fixtures = await api('/fixtures?from=' + encodeURIComponent(date) + '&to=' + encodeURIComponent(to) + '&timezone=Europe%2FRome');
-          lookupMode = 'date-range';
-        }
+        // Avoid the "next" parameter: API-Football free plans may not support it.
+        // Query an explicit date range instead, which also works for upcoming fixtures.
+        const end = new Date(date + 'T12:00:00Z');
+        end.setUTCDate(end.getUTCDate() + 14);
+        const to = end.toISOString().slice(0, 10);
+        fixtures = await api('/fixtures?from=' + encodeURIComponent(date) + '&to=' + encodeURIComponent(to) + '&timezone=Europe%2FRome');
+        lookupMode = 'date-range';
       }
       const preferred = fixtures.filter(f => ALLOWED_LEAGUES.has(Number(f.league && f.league.id)));
       // If today's matches use competitions outside our preferred list, show the real fixtures anyway
@@ -70,7 +67,7 @@ module.exports = async function handler(req, res) {
       const useFallback = preferred.length === 0 && fixtures.length > 0;
       const visible = (useFallback ? fixtures : preferred).slice(0, 100);
       const message = fixtures.length === 0
-        ? 'API-Football non ha restituito partite né con la ricerca prossime partite né con l’intervallo di 14 giorni. La chiave è stata accettata, ma il piano/copertura API potrebbe non includere queste competizioni o date.'
+        ? 'API-Football non ha restituito partite nell’intervallo dei prossimi 14 giorni. La chiave è stata accettata, ma il piano/copertura API potrebbe non includere queste competizioni o date.'
         : useFallback
           ? 'Nessuna competizione preferita trovata: mostro le prossime partite reali disponibili.'
           : 'Prossime partite reali aggiornate. Seleziona “Analizza giocatori” per consultare le statistiche.';
