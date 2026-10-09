@@ -1,8 +1,10 @@
 // RadarBomber — primary data source: PitchAPI (free plan, current fixtures and match player stats).
 const BASE = 'https://api.pitchapi.dev/v1';
-// Solo competizioni di prima fascia: evitiamo seconde divisioni e coppe minori.
+// Campionati richiesti dall'utente, con priorità ai cinque principali.
 const LEAGUE_PRIORITY = [
-  'Premier League','Serie A','La Liga','Bundesliga','Ligue 1',
+  'Serie A','Premier League','La Liga','Bundesliga','Ligue 1',
+  'Eredivisie','Primeira Liga','Liga Portugal','Super Lig','Süper Lig',
+  'Belgian Pro League','Jupiler Pro League',
   'UEFA Champions League','Champions League',
   'UEFA Europa League','Europa League',
   'UEFA Conference League','Conference League'
