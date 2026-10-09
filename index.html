@@ -147,11 +147,9 @@ function setLiveSort(mode){
 function renderLivePlayers(){
  const out=document.getElementById('liveMatches');
  if(!out)return;
- const qualified=livePlayersData.filter(p=>Number(p.goalProbability)>=22||Number(p.gaProbability)>=36||Number(p.goalIndex)>=48||Number(p.gaIndex)>=52);
- // Se le statistiche del provider sono incomplete, mostriamo i migliori candidati
- // disponibili di entrambe le squadre, distinguendoli dalle proposte giocabili.
- const source=qualified.length?qualified:livePlayersData;
- const ranked=source.slice().sort((a,b)=>liveSort==='ga'?b.gaProbability-a.gaProbability:liveSort==='goal'?b.goalProbability-a.goalProbability:Math.max(b.goalProbability,b.gaProbability)-Math.max(a.goalProbability,a.gaProbability));
+ // Mostra tutti i candidati di entrambe le squadre. La soglia applicata all'elenco
+ // nascondeva quasi tutti i giocatori quando anche uno solo superava i limiti.
+ const ranked=livePlayersData.slice().sort((a,b)=>liveSort==='ga'?b.gaProbability-a.gaProbability:liveSort==='goal'?b.goalProbability-a.goalProbability:Math.max(b.goalProbability,b.gaProbability)-Math.max(a.goalProbability,a.gaProbability));
  const isBatch=liveFixtureId===null;
  let list=ranked;
  if(isBatch){
