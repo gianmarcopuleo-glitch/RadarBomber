@@ -192,6 +192,10 @@ const ODDS_SPORT_BY_LEAGUE = {
   'copa sudamericana':'soccer_conmebol_copa_sudamericana'
 };
 const oddsCache = new Map();
+// Deduplica le richieste simultanee alla stessa competizione: senza questa
+// cache in-flight ogni partita della stessa lega avviava una chiamata quote
+// separata e poteva esaurire il limite API, facendo scartare tutte le gare.
+const oddsInFlight = new Map();
 const providerCache = new Map();
 const h2hCache = new Map();
 const h2hPlayerCache = new Map();
@@ -211,15 +215,23 @@ async function oddsEvents(sportKey) {
   }
   const cached=oddsCache.get(sportKey);
   if(cached && Date.now()-cached.at<60000) return cached.events;
-  const url='https://api.the-odds-api.com/v4/sports/'+encodeURIComponent(sportKey)+'/odds/?regions=eu&markets=h2h&oddsFormat=decimal&apiKey='+encodeURIComponent(key);
-  const response=await fetch(url,{signal:AbortSignal.timeout(12000)});
-  let json=[];
-  try{json=await response.json()}catch{}
-  if(!response.ok || !Array.isArray(json)) {
-    const e=new Error('The Odds API non disponibile per '+sportKey+' (HTTP '+response.status+'). Verifica piano e chiave ODDS_API_KEY.'); e.status=response.status===401||response.status===403?503:502; throw e;
-  }
-  oddsCache.set(sportKey,{at:Date.now(),events:json});
-  return json;
+  if(oddsInFlight.has(sportKey)) return oddsInFlight.get(sportKey);
+  const request=(async()=>{
+    const url='https://api.the-odds-api.com/v4/sports/'+encodeURIComponent(sportKey)+'/odds/?regions=eu&markets=h2h&oddsFormat=decimal&apiKey='+encodeURIComponent(key);
+    const response=await fetch(url,{signal:AbortSignal.timeout(12000)});
+    let json=[];
+    try{json=await response.json()}catch{}
+    if(!response.ok || !Array.isArray(json)) {
+      const detail=json&&typeof json.message==='string'?': '+json.message:'';
+      const e=new Error('The Odds API non disponibile per '+sportKey+' (HTTP '+response.status+')'+detail+'. Verifica piano e chiave ODDS_API_KEY.');
+      e.status=response.status===401||response.status===403?503:502; throw e;
+    }
+    oddsCache.set(sportKey,{at:Date.now(),events:json});
+    return json;
+  })();
+  oddsInFlight.set(sportKey,request);
+  try{return await request;}
+  finally{oddsInFlight.delete(sportKey);}
 }
 function median(values) {
   const v=values.filter(n=>Number.isFinite(n)&&n>1).sort((a,b)=>a-b);
