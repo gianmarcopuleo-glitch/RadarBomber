@@ -1,4 +1,4 @@
-// RadarBomber API proxy for API-Football. Keep API_FOOTBALL_KEY in Vercel Environment Variables.
+// RadarBomber: API-Football for fixtures, football-data.org for current-season player scorers. Keep both tokens in Vercel Environment Variables.
 const BASE = 'https://v3.football.api-sports.io';
 // Keep the radar focused on major European leagues and continental competitions.
 const ALLOWED_LEAGUES = new Set([39, 140, 135, 78, 61, 2, 3, 848, 45, 143, 94, 88]);
@@ -35,6 +35,47 @@ async function api(path) {
 }
 
 const num = v => Number(v || 0);
+
+// football-data.org exposes current-season goals and assists for supported competitions.
+// It is a separate free token, because API-Football Free blocks the current season (2026/27).
+const FOOTBALL_DATA_COMPETITIONS = new Map([
+  [39, 'PL'], [140, 'PD'], [135, 'SA'], [78, 'BL1'], [61, 'FL1'],
+  [2, 'CL'], [3, 'EL'], [848, 'ECL'], [45, 'FAC'], [143, 'CDR'],
+  [94, 'PPL'], [88, 'DED']
+]);
+
+async function footballData(path) {
+  const token = (process.env.FOOTBALL_DATA_TOKEN || '').trim();
+  if (!token) {
+    const e = new Error('Manca FOOTBALL_DATA_TOKEN: configura il token gratuito di football-data.org in Vercel.');
+    e.status = 503;
+    throw e;
+  }
+  const response = await fetch('https://api.football-data.org/v4' + path, {
+    headers: { 'X-Auth-Token': token },
+    signal: AbortSignal.timeout(12000)
+  });
+  const json = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = json.message || json.error || ('HTTP ' + response.status);
+    const e = new Error('football-data.org: ' + detail);
+    e.status = response.status;
+    throw e;
+  }
+  return json;
+}
+
+function indexFromAppearances(goals, assists, apps, kind) {
+  if (!apps) return 0;
+  const perMatch = (kind === 'goal' ? goals : goals + assists) / apps;
+  const score = 100 * (1 - Math.exp(-perMatch * (kind === 'goal' ? 1.35 : 1.0))) * Math.min(1, apps / 4);
+  return Math.max(0, Math.min(99, Math.round(score)));
+}
+
+function sameTeam(a, b) {
+  const x = normalizeTeam(a), y = normalizeTeam(b);
+  return !!x && !!y && (x === y || x.includes(y) || y.includes(x));
+}
 
 function indexFor(goals, assists, minutes, apps, kind) {
   if (!apps || !minutes) return 0;
@@ -110,69 +151,61 @@ module.exports = async function handler(req, res) {
     }
     const fixtureDate = String(fixture.fixture.date || date);
     const season = Number(fixtureDate.slice(0, 4)) - (Number(fixtureDate.slice(5, 7)) < 7 ? 1 : 0);
-    // Treat lineups and injuries as optional: a restricted endpoint must not cancel player analysis.
-    const optional = async path => {
-      try { return { data: await api(path), error: '' }; }
-      catch (e) { return { data: [], error: e.message || 'Errore provider' }; }
-    };
-    // Never substitute old-season rosters for current matches: stale players are misleading.
-    // Make one current-season request per team to preserve the Free plan quota.
-    const loadTeamPlayers = async (teamId, leagueId, requestedSeason) => {
-      const result = await optional('/players?team=' + teamId + '&season=' + requestedSeason + '&league=' + leagueId + '&page=1');
-      return { ...result, season: result.error ? null : requestedSeason };
-    };
-    // Current-season player statistics only. Do not spend extra calls on optional lineups/injuries.
-    const lineupResult = { data: [], error: '' };
-    const injuryResult = { data: [], error: '' };
-    const [homeResult, awayResult] = await Promise.all([
-      loadTeamPlayers(fixture.teams.home.id, fixture.league.id, season),
-      loadTeamPlayers(fixture.teams.away.id, fixture.league.id, season)
-    ]);
-    const lineups = lineupResult.data;
-    const homePlayers = homeResult.data;
-    const awayPlayers = awayResult.data;
+    const homeName = fixture.teams.home.name;
+    const awayName = fixture.teams.away.name;
+    const leagueCode = FOOTBALL_DATA_COMPETITIONS.get(Number(fixture.league.id));
     const diagnostics = [];
-    const usedSeasons = [homeResult.season, awayResult.season].filter(Boolean);
-    if (homeResult.error) diagnostics.push('Statistiche ' + fixture.teams.home.name + ': ' + homeResult.error);
-    if (awayResult.error) diagnostics.push('Statistiche ' + fixture.teams.away.name + ': ' + awayResult.error);
-    if (usedSeasons.some(y => y !== season)) {
-      diagnostics.push('ATTENZIONE: piano gratuito; statistiche storiche stagione ' + [...new Set(usedSeasons)].join(' e ') + ', non dati aggiornati della stagione corrente.');
-    }
-    diagnostics.push('Formazioni e infortuni non verificati: per rispettare il limite API gratuito, questa versione non li scarica automaticamente.');
-    const injuries = [];
-    const lineupKnown = false;
-    const starters = new Set();
-    const injured = new Set(injuries.map(i => String(i.player && i.player.id)));
-    const players = [];
+    let players = [];
 
-    for (const group of [
-      { team: fixture.teams.home.name, data: homePlayers },
-      { team: fixture.teams.away.name, data: awayPlayers }
-    ]) {
-      for (const row of group.data) {
-        const p = row.player || {};
-        const st = (row.statistics || [])[0] || {};
-        const id = String(p.id || '');
-        const goals = num(st.goals && st.goals.total);
-        const assists = num(st.goals && st.goals.assists);
-        const minutes = num(st.games && st.games.minutes);
-        const apps = num(st.games && st.games.appearences);
-        if (!p.name || minutes < 90 || (lineupKnown && starters.size > 0 && !starters.has(id)) || injured.has(id)) continue;
-        players.push({
-          name: p.name, team: group.team, position: st.games && st.games.position || '',
-          goals, assists, minutes, statsSeason: (group.team === fixture.teams.home.name ? homeResult.season : awayResult.season), starter: starters.has(id), lineupKnown,
-          injured: injured.has(id),
-          goalIndex: indexFor(goals, assists, minutes, apps, 'goal'),
-          gaIndex: indexFor(goals, assists, minutes, apps, 'ga')
-        });
+    // Do not show historic API-Football squads. Use current-season scorers/assists from football-data.org.
+    if (!process.env.FOOTBALL_DATA_TOKEN) {
+      diagnostics.push('Configura FOOTBALL_DATA_TOKEN con il token gratuito di football-data.org nelle Environment Variables di Vercel.');
+    } else if (!leagueCode) {
+      diagnostics.push('Competizione non ancora mappata alla copertura football-data.org: ' + fixture.league.name + '.');
+    } else {
+      try {
+        const result = await footballData('/competitions/' + leagueCode + '/scorers?season=' + season + '&limit=50');
+        const scorers = Array.isArray(result.scorers) ? result.scorers : [];
+        players = scorers.filter(row => {
+          const teamName = row.team && row.team.name;
+          return sameTeam(teamName, homeName) || sameTeam(teamName, awayName);
+        }).map(row => {
+          const p = row.player || {};
+          const teamName = row.team && row.team.name || '';
+          const goals = num(row.goals);
+          const assists = num(row.assists);
+          const apps = num(row.playedMatches);
+          return {
+            name: p.name || '',
+            team: teamName,
+            position: p.position || '',
+            goals,
+            assists,
+            apps,
+            minutes: null,
+            statsSeason: season,
+            source: 'football-data.org',
+            starter: false,
+            lineupKnown: false,
+            injured: false,
+            goalIndex: indexFromAppearances(goals, assists, apps, 'goal'),
+            gaIndex: indexFromAppearances(goals, assists, apps, 'ga')
+          };
+        }).filter(p => p.name && p.apps > 0);
+        if (!players.length) {
+          diagnostics.push('Nessun marcatore/assistman delle due squadre presente nella classifica disponibile per la stagione ' + season + '.');
+        }
+        diagnostics.push('Statistiche stagionali correnti da football-data.org; presenze e contributi totali, non rendimento delle ultime 5 partite. Formazioni e infortuni non verificati.');
+      } catch (e) {
+        diagnostics.push(e.message || 'Errore nel recupero delle statistiche da football-data.org.');
       }
     }
+
     players.sort((a, b) => Math.max(b.goalIndex, b.gaIndex) - Math.max(a.goalIndex, a.gaIndex));
     const message = players.length
-      ? 'Giocatori con statistiche della stagione corrente. Indici statistici comparativi, non probabilità calibrate.' +
-        (diagnostics.length ? ' Avviso: ' + diagnostics.join(' | ') : '')
-      : 'Nessun giocatore mostrato: mancano statistiche accessibili della stagione corrente. Per evitare nomi e rendimento obsoleti, RadarBomber non usa più rose/statistiche storiche.' +
-        (diagnostics.length ? ' Dettagli: ' + diagnostics.join(' | ') : ' Verifica la disponibilità della stagione corrente nel piano API-Football.');
+      ? 'Statistiche della stagione corrente da football-data.org. Gli indici sono comparativi e basati su gol/assist per presenza; non sono probabilità calibrate. ' + diagnostics.join(' | ')
+      : 'Nessun giocatore verificato mostrato: RadarBomber non usa dati storici come se fossero attuali. ' +
+        (diagnostics.length ? 'Dettagli: ' + diagnostics.join(' | ') : 'Verifica la configurazione del provider dati.');
     res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=60');
     res.status(200).json({
       message,
