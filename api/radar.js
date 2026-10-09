@@ -84,21 +84,30 @@ module.exports = async function handler(req, res) {
     // Get the current seasons for the supported leagues and search the most recent completed
     // fixtures involving either team. No historic-season fallback is used.
     const leagueData = await pitch('/leagues');
-    const leagues = (leagueData.leagues || []).filter(l => allowed(l.name) && l.id && Array.isArray(l.seasons) && l.seasons.length);
+    const leagues = (leagueData.leagues || []).filter(l => allowed(l.name) && l.id);
     const leagueResults = await Promise.all(leagues.map(async league => {
       try {
-        const data = await pitch('/leagues/' + encodeURIComponent(league.id) + '/matches?season=' + encodeURIComponent(league.seasons[0]) + '&status=all');
-        return (data.matches || []).map(m => ({...m, leagueName: (data.league && data.league.name) || league.name}));
+        // Ask the league resource for its declared current season. Never assume seasons[0]
+        // is current: some provider responses may return seasons in an unexpected order.
+        const current = await pitch('/leagues/' + encodeURIComponent(league.id));
+        const currentSeason = current.season;
+        if (!currentSeason) return [];
+        const data = await pitch('/leagues/' + encodeURIComponent(league.id) + '/matches?season=' + encodeURIComponent(currentSeason) + '&status=all');
+        return (data.matches || []).map(m => ({...m, leagueName: (data.league && data.league.name) || league.name, _season: currentSeason}));
       } catch { return []; }
     }));
     const allMatches = [...new Map(leagueResults.flat().map(m => [m.id,m])).values()];
     const targetDate = String(fixture.date || date);
+    const targetMs = Date.parse(targetDate + 'T23:59:59Z');
+    const earliestMs = targetMs - 50 * 24 * 60 * 60 * 1000;
     const recentFor = teamId => allMatches
       .filter(m => {
         const ids = [String(m.home_team && m.home_team.id || ''),String(m.away_team && m.away_team.id || '')];
         const status = normalize(m.status);
-        return ids.includes(teamId) && m.id !== fixtureId && String(m.date || '') < targetDate &&
-          (status === 'finished' || status === 'complete' || status === 'completed' || (m.score_home != null && m.score_away != null));
+        const matchMs = Date.parse(String(m.date || '') + 'T12:00:00Z');
+        const finished = status === 'finished' || status === 'complete' || status === 'completed' || (m.score_home != null && m.score_away != null);
+        return ids.includes(teamId) && m.id !== fixtureId &&
+          Number.isFinite(matchMs) && matchMs >= earliestMs && matchMs < targetMs && finished;
       })
       .sort((a,b) => String(b.date || '').localeCompare(String(a.date || '')))
       .slice(0,3);
