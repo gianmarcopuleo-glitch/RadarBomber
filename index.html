@@ -70,9 +70,9 @@ async function refreshLive(){
 async function scanFixturesForPlayers(fixtures){
  const status=document.getElementById('liveStatus'),out=document.getElementById('liveMatches');
  const selectedDate=document.getElementById('liveDate')?.value||localDateISO();
- // Per contenere tempi e chiamate al provider analizziamo al massimo le prime 8 partite
- // delle competizioni ammesse, senza applicare filtri sulle quote delle squadre.
- const batch=fixtures.slice(0,8),all=[];
+ // Analizziamo fino a 20 partite per data: più copertura, mantenendo sotto controllo
+ // tempi e richieste al provider. Non applichiamo filtri sulle quote delle squadre.
+ const batch=fixtures.slice(0,20),all=[];
  out.innerHTML='<div class="empty">Sto analizzando le partite selezionate…</div>';
  for(let i=0;i<batch.length;i++){
   const f=batch[i];
@@ -88,7 +88,7 @@ async function scanFixturesForPlayers(fixtures){
  liveSort='goal';
  window.liveFixtureDetails=batch;
  renderLivePlayers();
- status.textContent='Radar aggiornato: '+all.filter(p=>Number(p.goalIndex)>=70||Number(p.gaIndex)>=70).length+' candidati qualificati trovati su '+batch.length+' partite analizzate. '+(fixtures.length>batch.length?'Per rapidità sono state analizzate le prime 8 partite filtrate; le altre '+(fixtures.length-batch.length)+' restano disponibili nel calendario.':'');
+ status.textContent='Radar aggiornato: '+all.filter(p=>Number(p.goalIndex)>=70||Number(p.gaIndex)>=70).length+' candidati qualificati trovati su '+batch.length+' partite analizzate. '+(fixtures.length>batch.length?'Per contenere i tempi sono state analizzate le prime 20 partite filtrate; le altre '+(fixtures.length-batch.length)+' restano disponibili nel calendario.':'');
 }
 async function loadLivePlayers(fixtureId){
  const status=document.getElementById('liveStatus'),out=document.getElementById('liveMatches');
