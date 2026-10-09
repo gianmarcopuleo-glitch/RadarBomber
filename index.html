@@ -88,7 +88,7 @@ async function scanFixturesForPlayers(fixtures){
  liveSort='best';
  window.liveFixtureDetails=batch;
  renderLivePlayers();
- status.textContent='Radar aggiornato: '+all.filter(p=>Number(p.goalIndex)>=70||Number(p.gaIndex)>=70).length+' candidati qualificati trovati su '+batch.length+' partite analizzate. '+(fixtures.length>batch.length?'Per contenere i tempi sono state analizzate le prime 30 partite filtrate; le altre '+(fixtures.length-batch.length)+' restano disponibili nel calendario.':'');
+ status.textContent='Radar aggiornato: '+all.filter(p=>Number(p.goalIndex)>=74||Number(p.gaIndex)>=74).length+' candidati con indice almeno 74 trovati su '+batch.length+' partite analizzate. '+(fixtures.length>batch.length?'Per contenere i tempi sono state analizzate le prime 30 partite filtrate; le altre '+(fixtures.length-batch.length)+' restano disponibili nel calendario.':'');
 }
 async function loadLivePlayers(fixtureId){
  const status=document.getElementById('liveStatus'),out=document.getElementById('liveMatches');
