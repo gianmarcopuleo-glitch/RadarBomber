@@ -534,7 +534,7 @@ module.exports = async function handler(req, res) {
           20+Math.min(5,appearances)*8+(lineupConfirmed?25:lineupAvailable?10:0)+
           (p.minutes>0?10:0)+(shotDataAvailable||p.statsXg>0?17:0)+(shotsOnTarget>0?8:0)
         ));
-        const eligibleForBet=Boolean(lineupConfirmed && appearances>=3 && confidenceScore>=70 && (shotDataAvailable||p.statsXg>0||p.statsShots>0));
+        const eligibleForBet=Boolean((lineupConfirmed||lineupAvailable) && appearances>=2 && confidenceScore>=55 && (shotDataAvailable||p.statsXg>0||p.statsShots>0));
         return {...p,
           name:officialSource&&officialSource.name||p.name,
           team:p.teamId===homeId?home.name:away.name,
