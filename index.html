@@ -97,7 +97,7 @@ async function scanFixturesForPlayers(fixtures){
  const batch=weekendScan
    ? days.flatMap(day=>fixtures.filter(f=>(f.scanDate||selectedDate)===day).slice(0,15))
    : fixtures.slice(0,30);
- const all=[];
+ const all=[],detailFailures=[];
  out.innerHTML='<div class="empty">Sto analizzando le partite selezionate…</div>';
  for(let i=0;i<batch.length;i++){
   const f=batch[i];
@@ -107,14 +107,15 @@ async function scanFixturesForPlayers(fixtures){
    const r=await fetch('/api/radar?fixture='+encodeURIComponent(f.id)+'&date='+encodeURIComponent(matchDate),{cache:'no-store'});
    const data=await r.json();
    if(r.ok)(data.players||[]).forEach(p=>all.push({...p,fixtureId:String(f.id),matchLabel:f.home+' – '+f.away,leagueLabel:f.league,matchTime:f.time,matchDate:f.scanDate||selectedDate,headToHeadHistory:data.headToHead?.results||[],homeOdds:f.homeOdds,awayOdds:f.awayOdds,favorite:f.favorite}));
-  }catch(e){}
+   else if(detailFailures.length<4)detailFailures.push(f.home+'–'+f.away+': '+(data.error||('HTTP '+r.status)));
+  }catch(e){if(detailFailures.length<4)detailFailures.push(f.home+'–'+f.away+': '+String(e.message||e))}
  }
  livePlayersData=all;
  liveFixtureId=null;
  liveSort='best';
  window.liveFixtureDetails=batch;
  renderLivePlayers();
- status.textContent='Radar aggiornato: '+all.filter(p=>Number(p.goalIndex)>=60||Number(p.gaIndex)>=60).length+' candidati con indice almeno 60 trovati su '+batch.length+' partite analizzate. '+(weekendScan?'Scansione weekend: partite di sabato e domenica. ':'')+(fixtures.length>batch.length?'Per contenere i tempi sono state analizzate '+batch.length+' partite; le altre '+(fixtures.length-batch.length)+' restano disponibili nel calendario.':'');
+ status.textContent='Radar aggiornato: '+all.filter(p=>Number(p.goalIndex)>=60||Number(p.gaIndex)>=60).length+' candidati con indice almeno 60 trovati su '+batch.length+' partite analizzate.'+(detailFailures.length?' Errori nel recupero dettagli: '+detailFailures.join(' | ')+'.':'')+' '+(weekendScan?'Scansione weekend: partite di sabato e domenica. ':'')+(fixtures.length>batch.length?'Per contenere i tempi sono state analizzate '+batch.length+' partite; le altre '+(fixtures.length-batch.length)+' restano disponibili nel calendario.':'');
 }
 async function loadLivePlayers(fixtureId){
  const status=document.getElementById('liveStatus'),out=document.getElementById('liveMatches');
