@@ -70,9 +70,9 @@ async function refreshLive(){
 async function scanFixturesForPlayers(fixtures){
  const status=document.getElementById('liveStatus'),out=document.getElementById('liveMatches');
  const selectedDate=document.getElementById('liveDate')?.value||localDateISO();
- // Analizziamo fino a 20 partite per data: più copertura, mantenendo sotto controllo
- // tempi e richieste al provider. Non applichiamo filtri sulle quote delle squadre.
- const batch=fixtures.slice(0,20),all=[];
+ // Analizziamo fino a 30 partite per data, senza filtri sulle quote delle squadre.
+ // Le chiamate restano sequenziali per contenere i picchi di richieste al provider.
+ const batch=fixtures.slice(0,30),all=[];
  out.innerHTML='<div class="empty">Sto analizzando le partite selezionate…</div>';
  for(let i=0;i<batch.length;i++){
   const f=batch[i];
@@ -88,7 +88,7 @@ async function scanFixturesForPlayers(fixtures){
  liveSort='goal';
  window.liveFixtureDetails=batch;
  renderLivePlayers();
- status.textContent='Radar aggiornato: '+all.filter(p=>Number(p.goalIndex)>=70||Number(p.gaIndex)>=70).length+' candidati qualificati trovati su '+batch.length+' partite analizzate. '+(fixtures.length>batch.length?'Per contenere i tempi sono state analizzate le prime 20 partite filtrate; le altre '+(fixtures.length-batch.length)+' restano disponibili nel calendario.':'');
+ status.textContent='Radar aggiornato: '+all.filter(p=>Number(p.goalIndex)>=70||Number(p.gaIndex)>=70).length+' candidati qualificati trovati su '+batch.length+' partite analizzate. '+(fixtures.length>batch.length?'Per contenere i tempi sono state analizzate le prime 30 partite filtrate; le altre '+(fixtures.length-batch.length)+' restano disponibili nel calendario.':'');
 }
 async function loadLivePlayers(fixtureId){
  const status=document.getElementById('liveStatus'),out=document.getElementById('liveMatches');
@@ -120,7 +120,7 @@ function setLiveSort(mode){
 function renderLivePlayers(){
  const out=document.getElementById('liveMatches');
  if(!out)return;
- const qualified=livePlayersData.filter(p=>Number(p.goalIndex)>=70||Number(p.gaIndex)>=70);
+ const qualified=livePlayersData.filter(p=>Number(p.goalIndex)>=50||Number(p.gaIndex)>=50);
  const list=qualified.slice().sort((a,b)=>liveSort==='ga'?b.gaIndex-a.gaIndex:b.goalIndex-a.goalIndex);
  const isBatch=liveFixtureId===null;
  const backButton=isBatch?'<button onclick="showLiveFixtures()">Vedi palinsesto partite</button>':'<button onclick="showLiveFixtures()">← Torna al radar generale</button>';
@@ -128,7 +128,7 @@ function renderLivePlayers(){
   out.innerHTML=backButton+'<div class="empty">Nessun giocatore supera la soglia richiesta: serve un indice maggiore o uguale a 70/100 nel gol oppure nel gol + assist. Prova un\'altra partita o una data diversa.</div>';
   return;
  }
- out.innerHTML=backButton+'<div class="note">Mostro solo candidati con indice maggiore o uguale a 70/100 nel gol oppure nel gol + assist ('+list.length+' giocatori). Gli indici sono indicatori comparativi basati sulle statistiche recenti, non probabilità reali calibrate. '+(isBatch?'La scansione automatica considera fino a 8 partite per aggiornamento.':'')+'</div><div class="actions" style="margin:10px 0"><button class="'+(liveSort==='goal'?'primary':'')+'" onclick="setLiveSort(\'goal\')">Ordina per indice gol</button><button class="'+(liveSort==='ga'?'primary':'')+'" onclick="setLiveSort(\'ga\')">Ordina per indice gol + assist</button></div>'+list.map(p=>'<article class="player"><div><div class="name">'+esc(p.name)+'</div><div class="team">'+esc(p.team)+' · '+esc(p.position||'Ruolo n.d.')+' · '+(p.lineupConfirmed?'Titolare ufficiale':p.lineupKnown?'Titolare probabile':'Formazione non disponibile')+(p.injured?' · ASSENTE/INFORTUNIO':'')+'</div><div class="tiny">'+esc(p.matchLabel||'Partita selezionata')+' · '+esc(p.leagueLabel||'')+' · '+p.goals+' gol · '+p.assists+' assist nelle ultime '+p.recentMatches+' gare</div><div class="tiny">Analisi basata sulle statistiche recenti; quote delle squadre non utilizzate</div></div><div><div class="tiny">Indice gol</div><div class="score">'+p.goalIndex+'/100</div></div><div><div class="tiny">Indice gol + assist</div><div class="score">'+p.gaIndex+'/100</div></div><div><button onclick="saveLivePick('+esc(JSON.stringify(String(p.fixtureId||liveFixtureId)))+','+esc(JSON.stringify(p.name))+','+esc(JSON.stringify(p.team))+',\'goal\','+p.goalIndex+')">Tip gol</button><button style="margin-top:5px" onclick="saveLivePick('+esc(JSON.stringify(String(p.fixtureId||liveFixtureId)))+','+esc(JSON.stringify(p.name))+','+esc(JSON.stringify(p.team))+',\'ga\','+p.gaIndex+')">Tip G+A</button></div></article>').join('');
+ out.innerHTML=backButton+'<div class="note">Mostro giocatori con indice di almeno 50/100; da 70/100 sono candidati che superano la soglia principale, mentre da 50 a 69 sono da monitorare. Gli indici sono comparativi, non probabilità reali calibrate ('+list.length+' giocatori). '+(isBatch?'La scansione automatica considera fino a 30 partite per aggiornamento.':'')+'</div><div class="actions" style="margin:10px 0"><button class="'+(liveSort==='goal'?'primary':'')+'" onclick="setLiveSort(\'goal\')">Ordina per indice gol</button><button class="'+(liveSort==='ga'?'primary':'')+'" onclick="setLiveSort(\'ga\')">Ordina per indice gol + assist</button></div>'+list.map(p=>'<article class="player"><div><div class="name">'+esc(p.name)+'</div><div class="team">'+esc(p.team)+' · '+esc(p.position||'Ruolo n.d.')+' · '+(p.lineupConfirmed?'Titolare ufficiale':p.lineupKnown?'Titolare probabile':'Formazione non disponibile')+(p.injured?' · ASSENTE/INFORTUNIO':'')+'</div><div class="tiny">'+esc(p.matchLabel||'Partita selezionata')+' · '+esc(p.leagueLabel||'')+' · '+p.goals+' gol · '+p.assists+' assist nelle ultime '+p.recentMatches+' gare</div><div class="tiny">Analisi basata sulle statistiche recenti; quote delle squadre non utilizzate</div></div><div><div class="tiny">Indice gol</div><div class="score">'+p.goalIndex+'/100</div></div><div><div class="tiny">Indice gol + assist</div><div class="score">'+p.gaIndex+'/100</div></div><div><button onclick="saveLivePick('+esc(JSON.stringify(String(p.fixtureId||liveFixtureId)))+','+esc(JSON.stringify(p.name))+','+esc(JSON.stringify(p.team))+',\'goal\','+p.goalIndex+')">Tip gol</button><button style="margin-top:5px" onclick="saveLivePick('+esc(JSON.stringify(String(p.fixtureId||liveFixtureId)))+','+esc(JSON.stringify(p.name))+','+esc(JSON.stringify(p.team))+',\'ga\','+p.gaIndex+')">Tip G+A</button></div></article>').join('');
 }
 function saveLivePick(fixtureId,name,team,market,index){
  const p={id:'live_'+Date.now(),playerId:'live_'+fixtureId+'_'+name,name,team,match:'Partita ID '+fixtureId,matchDate:new Date().toISOString().slice(0,10),market,prob:index,odd:null,date:new Date().toLocaleDateString('it-IT'),createdAt:new Date().toISOString(),result:'pending',source:'PitchAPI — statistiche recenti'};
