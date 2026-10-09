@@ -105,7 +105,7 @@ module.exports = async function handler(req, res) {
     // Player statistics may be limited to older seasons on the Free plan.
     // Try the fixture season first, then explicitly fall back only to seasons the provider says are accessible.
     const loadTeamPlayers = async (teamId, leagueId, requestedSeason) => {
-      const seasonsToTry = [requestedSeason, 2024, 2023, 2022].filter((v, i, a) => a.indexOf(v) === i);
+      const seasonsToTry = [requestedSeason, 2023, 2022].filter((v, i, a) => a.indexOf(v) === i);
       let lastError = '';
       for (const statsSeason of seasonsToTry) {
         let result = await optional('/players?team=' + teamId + '&season=' + statsSeason + '&league=' + leagueId + '&page=1');
@@ -125,11 +125,14 @@ module.exports = async function handler(req, res) {
       }
       return { data: [], error: lastError || 'Nessuna statistica disponibile nelle stagioni accessibili', season: null };
     };
-    const [lineupResult, homeResult, awayResult, injuryResult] = await Promise.all([
-      optional('/fixtures/lineups?fixture=' + fixtureId),
-      loadTeamPlayers(fixture.teams.home.id, fixture.league.id, season),
-      loadTeamPlayers(fixture.teams.away.id, fixture.league.id, season),
-      optional('/injuries?fixture=' + fixtureId)
+    // Prioritize the free-plan accessible historical seasons to avoid wasting requests on the current season.
+    // Lineups and injuries are omitted from automatic analysis to stay within the 10-requests/minute limit.
+    const lineupResult = { data: [], error: 'Formazioni non richieste automaticamente per ridurre le chiamate API.' };
+    const injuryResult = { data: [], error: 'Infortuni non richiesti automaticamente per ridurre le chiamate API.' };
+    const freePlanSeason = Number(req.query.season) || 2024;
+    const [homeResult, awayResult] = await Promise.all([
+      loadTeamPlayers(fixture.teams.home.id, fixture.league.id, freePlanSeason),
+      loadTeamPlayers(fixture.teams.away.id, fixture.league.id, freePlanSeason)
     ]);
     const lineups = lineupResult.data;
     const homePlayers = homeResult.data;
@@ -141,11 +144,10 @@ module.exports = async function handler(req, res) {
     if (usedSeasons.some(y => y !== season)) {
       diagnostics.push('ATTENZIONE: piano gratuito; statistiche storiche stagione ' + [...new Set(usedSeasons)].join(' e ') + ', non dati aggiornati della stagione corrente.');
     }
-    if (lineupResult.error) diagnostics.push('Formazioni non disponibili: ' + lineupResult.error);
-    if (injuryResult.error) diagnostics.push('Infortuni non disponibili: ' + injuryResult.error);
-    const injuries = injuryResult.data;
-    const lineupKnown = lineups.length > 0;
-    const starters = new Set(lineups.flatMap(t => (t.startXI || []).map(p => String(p.player && p.player.id))));
+    diagnostics.push('Formazioni e infortuni non verificati: per rispettare il limite API gratuito, questa versione non li scarica automaticamente.');
+    const injuries = [];
+    const lineupKnown = false;
+    const starters = new Set();
     const injured = new Set(injuries.map(i => String(i.player && i.player.id)));
     const players = [];
 
