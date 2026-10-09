@@ -152,16 +152,44 @@ const statAny = (player, keys) => {
 };
 const weighted = parts => Math.round(parts.reduce((sum, [value, weight]) => sum + clamp(value) * weight, 0) / 100);
 const ODDS_SPORT_BY_LEAGUE = {
-  'serie a':'soccer_italy_serie_a',
-  'premier league':'soccer_epl',
-  'la liga':'soccer_spain_la_liga',
-  'bundesliga':'soccer_germany_bundesliga',
-  'ligue 1':'soccer_france_ligue_one',
-  'eredivisie':'soccer_netherlands_eredivisie',
-  'primeira liga':'soccer_portugal_primeira_liga',
-  'liga portugal':'soccer_portugal_primeira_liga',
-  'uefa champions league':'soccer_uefa_champs_league',
-  'uefa europa league':'soccer_uefa_europa_league'
+  'serie a':'soccer_italy_serie_a','italian serie a':'soccer_italy_serie_a',
+  'premier league':'soccer_epl','english premier league':'soccer_epl',
+  'la liga':'soccer_spain_la_liga','laliga':'soccer_spain_la_liga','spanish la liga':'soccer_spain_la_liga',
+  'bundesliga':'soccer_germany_bundesliga','german bundesliga':'soccer_germany_bundesliga',
+  'ligue 1':'soccer_france_ligue_one','french ligue 1':'soccer_france_ligue_one',
+  'eredivisie':'soccer_netherlands_eredivisie','dutch eredivisie':'soccer_netherlands_eredivisie',
+  'primeira liga':'soccer_portugal_primeira_liga','liga portugal':'soccer_portugal_primeira_liga','portuguese primeira liga':'soccer_portugal_primeira_liga',
+  'uefa champions league':'soccer_uefa_champs_league','champions league':'soccer_uefa_champs_league',
+  'uefa europa league':'soccer_uefa_europa_league','europa league':'soccer_uefa_europa_league',
+  'uefa conference league':'soccer_uefa_europa_conference_league','conference league':'soccer_uefa_europa_conference_league',
+  'super lig':'soccer_turkey_super_league','turkish super lig':'soccer_turkey_super_league',
+  'belgian pro league':'soccer_belgium_first_div','pro league':'soccer_belgium_first_div','jupiler pro league':'soccer_belgium_first_div',
+  'saudi pro league':'soccer_saudi_arabia_pro_league','saudi professional league':'soccer_saudi_arabia_pro_league',
+  'scottish premiership':'soccer_spl','scotland premiership':'soccer_spl',
+  'mls':'soccer_usa_mls','major league soccer':'soccer_usa_mls',
+  'brasileirao serie a':'soccer_brazil_campeonato','serie a brazil':'soccer_brazil_campeonato','campeonato brasileiro serie a':'soccer_brazil_campeonato',
+  'liga profesional':'soccer_argentina_primera_division','argentina primera division':'soccer_argentina_primera_division',
+  'greek super league':'soccer_greece_super_league','super league greece':'soccer_greece_super_league',
+  'austrian bundesliga':'soccer_austria_bundesliga','austria bundesliga':'soccer_austria_bundesliga',
+  'danish superliga':'soccer_denmark_superliga','superliga denmark':'soccer_denmark_superliga',
+  'allsvenskan':'soccer_sweden_allsvenskan','swedish allsvenskan':'soccer_sweden_allsvenskan',
+  'eliteserien':'soccer_norway_eliteserien','norwegian eliteserien':'soccer_norway_eliteserien',
+  'ekstraklasa':'soccer_poland_ekstraklasa','polish ekstraklasa':'soccer_poland_ekstraklasa',
+  'j league':'soccer_japan_j_league','j1 league':'soccer_japan_j_league',
+  'k league 1':'soccer_korea_kleague1',
+  'coppa italia':'soccer_italy_coppa_italia','italy coppa italia':'soccer_italy_coppa_italia',
+  'fa cup':'soccer_fa_cup','english fa cup':'soccer_fa_cup',
+  'efl cup':'soccer_england_efl_cup','league cup':'soccer_england_efl_cup',
+  'copa del rey':'soccer_spain_copa_del_rey',
+  'dfb pokal':'soccer_germany_dfb_pokal','german cup':'soccer_germany_dfb_pokal',
+  'coupe de france':'soccer_france_coupe_de_france',
+  'uefa nations league':'soccer_uefa_nations_league','nations league':'soccer_uefa_nations_league',
+  'european championship':'soccer_uefa_european_championship','uefa euro':'soccer_uefa_european_championship',
+  'fifa world cup':'soccer_fifa_world_cup','world cup':'soccer_fifa_world_cup',
+  'uefa european qualifiers':'soccer_fifa_world_cup_qualifiers_europe',
+  'world cup qualification europe':'soccer_fifa_world_cup_qualifiers_europe',
+  'copa libertadores':'soccer_conmebol_copa_libertadores',
+  'copa sudamericana':'soccer_conmebol_copa_sudamericana'
 };
 const oddsCache = new Map();
 const providerCache = new Map();
@@ -218,13 +246,29 @@ function getEventPrices(event) {
   return {homeOdds,awayOdds,favorite,bookmakersCount:Math.min(home.length,away.length)};
 }
 function matchOddsForFixture(fixture, events) {
-  const event=(events||[]).find(e=>sameTeam(e.home_team,fixture.home_team&&fixture.home_team.name)&&sameTeam(e.away_team,fixture.away_team&&fixture.away_team.name));
-  if(!event)return null;
-  const prices=getEventPrices(event);
+  const homeName=fixture.home_team&&fixture.home_team.name||'';
+  const awayName=fixture.away_team&&fixture.away_team.name||'';
   const fixtureTime=Date.parse(fixture.time_utc||fixture.date||'');
-  const eventTime=Date.parse(event.commence_time||'');
-  if(Number.isFinite(fixtureTime)&&Number.isFinite(eventTime)&&Math.abs(fixtureTime-eventTime)>36*60*60*1000)return null;
-  return {...prices,eventId:event.id,updatedAt:event.bookmakers?.[0]?.last_update||null};
+  // Non agganciamo quote di una gara diversa: stesso ordine casa/trasferta,
+  // squadre compatibili e calcio d'inizio entro 8 ore quando entrambi gli orari esistono.
+  const candidates=(events||[]).filter(e=>{
+    if(!sameTeam(e.home_team,homeName)||!sameTeam(e.away_team,awayName))return false;
+    const eventTime=Date.parse(e.commence_time||'');
+    if(Number.isFinite(fixtureTime)&&Number.isFinite(eventTime)&&Math.abs(fixtureTime-eventTime)>8*60*60*1000)return false;
+    return true;
+  });
+  if(!candidates.length)return null;
+  candidates.sort((a,b)=>{
+    const exactA=normalize(a.home_team)===normalize(homeName)&&normalize(a.away_team)===normalize(awayName)?0:1;
+    const exactB=normalize(b.home_team)===normalize(homeName)&&normalize(b.away_team)===normalize(awayName)?0:1;
+    if(exactA!==exactB)return exactA-exactB;
+    const ta=Date.parse(a.commence_time||''),tb=Date.parse(b.commence_time||'');
+    if(Number.isFinite(fixtureTime)&&Number.isFinite(ta)&&Number.isFinite(tb))return Math.abs(ta-fixtureTime)-Math.abs(tb-fixtureTime);
+    return 0;
+  });
+  const event=candidates[0];
+  const prices=getEventPrices(event);
+  return {...prices,eventId:event.id,updatedAt:event.bookmakers?.[0]?.last_update||null,oddsSource:'The Odds API'};
 }
 async function oddsForFixture(fixture) {
   const sportKey=oddsSportForLeague(fixture.league&&fixture.league.name);
@@ -668,7 +712,7 @@ module.exports = async function handler(req, res) {
       return xt.length>0&&yt.length>0&&xt[xt.length-1]===yt[yt.length-1]&&xt[xt.length-1].length>=4;
     };
     const players = [...playersByKey.values()]
-      .filter(p=>p.teamId===favoriteTeamId && p.position!=='Portiere' && (p.position==='Attaccante'||p.position==='Centrocampista'||p.goals>0||p.assists>0||p.shots>0||p.xg>0||p.statsShots>0||p.keyPasses>0))
+      .filter(p=>p.teamId===favoriteTeamId && p.position!=='Portiere')
       .map(p=>{
         const officialSource=lineupPlayersById.get(String(p.id)) || [...lineupPlayersById.values()].find(o=>o.teamId===p.teamId&&samePlayerName(o.name,p.name));
         const isCurrentStarter=Boolean(officialSource);
