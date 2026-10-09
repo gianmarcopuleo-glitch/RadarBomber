@@ -8,8 +8,8 @@
 <section class="hero"><div><div class="eyebrow">MATCHDAY INTELLIGENCE</div><h2>Trova il segnale.<br>Valuta con criterio.</h2><p>Due classifiche distinte: probabilità di segnare e probabilità combinata di gol o assist. Confronta le quote inserite e registra gli esiti.</p></div><div class="stats"><div class="stat"><strong id="nPlayers">0</strong><span>Giocatori</span></div><div class="stat"><strong id="nPicks">0</strong><span>Proposte</span></div><div class="stat"><strong id="hitRate">—</strong><span>Hit rate</span></div></div></section>
 <nav class="tabs"><button class="active" data-tab="radar">Radar giocatori</button><button data-tab="odds">Quote</button><button data-tab="results">Storico tip</button><button data-tab="manage">Gestisci dati</button></nav>
 <section id="radar" class="pane"><section class="panel" id="livePanel">
-<div class="head"><div><h3>Radar reale — giocatori prima di tutto</h3><div class="tiny">Scansione automatica delle partite filtrate: mostra i migliori 5 profili distinti del giorno o del weekend. Il punteggio combina rendimento recente, xG, tiri, attacco/difesa, quote 1X2, coefficiente casa/trasferta e precedenti diretti, compresi i marcatori quando i dati sono disponibili. Gli indici sono comparativi e le probabilità stimate non sono garanzie.</div></div><button id="refreshLive" class="primary">Aggiorna radar giocatori</button></div>
-<div id="liveStatus" class="note">Fonte dati: PitchAPI. Per attivarla, crea una chiave gratuita su pitchapi.dev e aggiungila su Vercel → progetto 9844 → Settings → Environment Variables come PITCHAPI_API_KEY. Poi fai Redeploy. La chiave deve restare su Vercel, mai nel codice pubblico o in chat. L'analisi considera fino a 5 partite concluse recenti per squadra, con dati sui tiri e sugli expected goals (xG) quando disponibili. I fattori mancanti non sono sostituiti da dati inventati.</div>
+<div class="head"><div><h3>Radar reale — giocatori prima di tutto</h3><div class="tiny">Scansione automatica delle partite filtrate: mostra i migliori 5 profili distinti del giorno o del weekend. Il punteggio combina rendimento recente, xG, tiri, attacco/difesa, coefficiente casa/trasferta e precedenti diretti, compresi i marcatori quando i dati sono disponibili. Gli indici sono comparativi e le probabilità stimate non sono garanzie.</div></div><button id="refreshLive" class="primary">Aggiorna radar giocatori</button></div>
+<div id="liveStatus" class="note">Fonte dati: PitchAPI. Il filtro quote è temporaneamente disattivato: l'analisi delle partite e dei giocatori non dipende dalle quote. Domani collegheremo una nuova API per il confronto quote. I dati statistici mancanti non sono sostituiti da dati inventati.</div>
 <div class="calendar-tools"><div><label class="calendar-label" for="liveDate">Scegli il giorno delle partite</label><input id="liveDate" type="date"></div><div class="date-actions"><button type="button" data-date-mode="today" class="active">Oggi</button><button type="button" data-date-mode="tomorrow">Domani</button><button type="button" data-date-mode="next">Tra 2 giorni</button><button type="button" data-date-mode="weekend">Weekend (sabato + domenica)</button></div></div><div id="liveMatches" class="players"><div class="empty">Premi “Aggiorna dati live” per caricare le partite in programma.</div></div>
 </section>
 <div class="panel"><div class="head"><div><h3>Archivio manuale giocatori</h3><div class="tiny">Non è una classifica live: mostra solo i profili con data partita di oggi o futura. Per i candidati aggiornati usa il Radar reale qui sopra: i giocatori vengono cercati automaticamente nelle partite filtrate. I profili senza data o con data passata non vengono più riproposti.</div></div><select id="sort" style="width:auto"><option value="goal">Ordina: prob. gol</option><option value="ga">Ordina: gol + assist</option><option value="form">Ordina: forma</option></select></div>
@@ -76,12 +76,12 @@ async function refreshLive(){
    const data=await r.json();
    if(!r.ok)throw new Error(data.error||'Servizio temporaneamente non disponibile');
    if(data.diagnostics)diagnosticsSets.push(data.diagnostics);
-   fixtureSets.push(...(data.fixtures||[]).filter(qualifiesByOdds).map(f=>({...f,scanDate:day})));
+   fixtureSets.push(...(data.fixtures||[]).map(f=>({...f,scanDate:day})));
   }
   const fixtures=[...new Map(fixtureSets.map(f=>[String(f.id),f])).values()];
   if(!fixtures.length){
    const d=diagnosticsSets.reduce((a,x)=>{a.provider+=Number(x.providerFixtures)||0;a.eligible+=Number(x.eligibleFixtures)||0;a.noEvent+=Number(x.odds?.noMatchingEvent)||0;a.no1x2+=Number(x.odds?.missing1X2)||0;a.threshold+=Number(x.odds?.thresholdRejected)||0;a.errors+=Number(x.odds?.apiErrors)||0;a.mapping+=Number(x.odds?.missingSportMapping)||0;return a;},{provider:0,eligible:0,noEvent:0,no1x2:0,threshold:0,errors:0,mapping:0});
-   status.textContent='Nessuna partita supera il filtro quote. Controllo: '+d.provider+' partite ricevute; '+d.eligible+' di campionati ammessi; '+d.noEvent+' senza corrispondenza quote; '+d.no1x2+' senza quote 1X2 complete; '+d.threshold+' escluse per soglia; '+d.errors+' errori API; '+d.mapping+' competizioni senza mappatura quote.';
+   status.textContent='Nessuna partita disponibile nelle competizioni ammesse. Controllo: '+d.provider+' partite ricevute; '+d.eligible+' di campionati ammessi.';
    out.innerHTML='<div class="empty">'+esc(status.textContent)+'</div>';
    return;
   }
@@ -92,7 +92,7 @@ async function refreshLive(){
 async function scanFixturesForPlayers(fixtures){
  const status=document.getElementById('liveStatus'),out=document.getElementById('liveMatches');
  const selectedDate=document.getElementById('liveDate')?.value||localDateISO();
- // Nel weekend analizziamo fino a 15 partite per ciascun giorno, per non favorire solo il sabato.
+ // Nel weekend analizziamo fino a 30 partite per ciascun giorno, per non favorire solo il sabato.
  const days=[...new Set(fixtures.map(f=>f.scanDate||selectedDate))];
  const batch=weekendScan
    ? days.flatMap(day=>fixtures.filter(f=>(f.scanDate||selectedDate)===day).slice(0,30))
@@ -137,8 +137,8 @@ function showLiveFixtures(){
  const fixtures=window.liveFixtureDetails||[];
  livePlayersData=[];
  liveFixtureId=null;
- out.innerHTML=fixtures.length?fixtures.map(f=>'<article class="player" style="grid-template-columns:1fr auto"><div><div class="name">'+esc(f.home)+' – '+esc(f.away)+'</div><div class="team">'+esc(f.league)+' · '+esc(f.time||'Orario non disponibile')+' · '+esc(f.status||'In programma')+'</div><div class="tiny">Filtro quote superato: casa '+Number(f.homeOdds).toFixed(2)+' · trasferta '+Number(f.awayOdds).toFixed(2)+' · favorita '+esc(f.favoriteTeam|| (f.favorite==='home'?f.home:f.away))+'</div></div><div><button data-fixture="'+esc(f.id)+'" onclick="loadLivePlayers(this.dataset.fixture)">Analizza partita</button></div></article>').join(''):'<div class="empty">Aggiorna il radar per caricare le partite.</div>';
- status.textContent='Calendario filtrato: '+fixtures.length+' partite con quote 1X2 valide e soglia favorita rispettata.';
+ out.innerHTML=fixtures.length?fixtures.map(f=>'<article class="player" style="grid-template-columns:1fr auto"><div><div class="name">'+esc(f.home)+' – '+esc(f.away)+'</div><div class="team">'+esc(f.league)+' · '+esc(f.time||'Orario non disponibile')+' · '+esc(f.status||'In programma')+'</div><div class="tiny">Quote disattivate temporaneamente · analisi di entrambe le squadre+'</div></div><div><button data-fixture="'+esc(f.id)+'" onclick="loadLivePlayers(this.dataset.fixture)">Analizza partita</button></div></article>').join(''):'<div class="empty">Aggiorna il radar per caricare le partite.</div>';
+ status.textContent='Calendario: '+fixtures.length+' partite delle competizioni ammesse; filtro quote temporaneamente disattivato.';
 }
 function setLiveSort(mode){
  liveSort=mode==='ga'?'ga':mode==='goal'?'goal':'best';
@@ -148,9 +148,8 @@ function renderLivePlayers(){
  const out=document.getElementById('liveMatches');
  if(!out)return;
  const qualified=livePlayersData.filter(p=>Number(p.goalProbability)>=22||Number(p.gaProbability)>=36||Number(p.goalIndex)>=48||Number(p.gaIndex)>=52);
- // Se le statistiche del provider sono incomplete, non svuotiamo il radar:
- // mostriamo comunque i migliori candidati della sola squadra favorita,
- // distinguendoli dalle proposte che superano i requisiti statistici.
+ // Se le statistiche del provider sono incomplete, mostriamo i migliori candidati
+ // disponibili di entrambe le squadre, distinguendoli dalle proposte giocabili.
  const source=qualified.length?qualified:livePlayersData;
  const ranked=source.slice().sort((a,b)=>liveSort==='ga'?b.gaProbability-a.gaProbability:liveSort==='goal'?b.goalProbability-a.goalProbability:Math.max(b.goalProbability,b.gaProbability)-Math.max(a.goalProbability,a.gaProbability));
  const isBatch=liveFixtureId===null;
@@ -170,7 +169,7 @@ function renderLivePlayers(){
   out.innerHTML=backButton+'<div class="empty">Non sono stati recuperati profili giocatore dal provider per le partite selezionate. Prova ad aggiornare o scegli un’altra data/partita.</div>';
   return;
  }
- out.innerHTML=backButton+'<div class="note"><b>Come leggere i numeri:</b> P(gol) e P(gol o assist) sono stime Poisson regolarizzate, non probabilità calibrate né garanzie. Il coefficiente sede è più forte in casa (1,14x) e più contenuto fuori (1,04x); i precedenti diretti pesano fino al 10% dell’indice gol e all’8% gol/assist, ma il bonus individuale viene applicato solo se i dati sono disponibili. Le quote 1X2 misurano la forza della squadra, non la probabilità personale di segnare. Modello ancora da validare su risultati reali. Le proposte giocabili richiedono formazione disponibile e dati individuali sufficienti; le altre sono candidati da monitorare. '+(isBatch?'Il radar mostra i migliori 5 profili distinti. '+(weekendScan?'Nel weekend scansiona fino a 15 partite di sabato e 15 di domenica.':'La scansione singolo giorno considera fino a 30 partite.'):'')+'</div><div class="actions" style="margin:10px 0"><button class="'+(liveSort==='best'?'primary':'')+'" onclick="setLiveSort(\'best\')">Ordina per stima più alta</button><button class="'+(liveSort==='goal'?'primary':'')+'" onclick="setLiveSort(\'goal\')">Ordina per probabilità gol</button><button class="'+(liveSort==='ga'?'primary':'')+'" onclick="setLiveSort(\'ga\')">Ordina per gol o assist</button></div>'+list.map(p=>{
+ out.innerHTML=backButton+'<div class="note"><b>Come leggere i numeri:</b> P(gol) e P(gol o assist) sono stime Poisson regolarizzate, non probabilità calibrate né garanzie. Il coefficiente sede è più forte in casa (1,14x) e più contenuto fuori (1,04x); i precedenti diretti pesano fino al 10% dell’indice gol e all’8% gol/assist, ma il bonus individuale viene applicato solo se i dati sono disponibili. Il filtro quote è temporaneamente disattivato: domani verrà collegata una nuova API. Modello ancora da validare su risultati reali. Le proposte giocabili richiedono formazione disponibile e dati individuali sufficienti; le altre sono candidati da monitorare. '+(isBatch?'Il radar mostra i migliori 5 profili distinti. '+(weekendScan?'Nel weekend scansiona fino a 15 partite di sabato e 15 di domenica.':'La scansione singolo giorno considera fino a 50 partite.'):'')+'</div><div class="actions" style="margin:10px 0"><button class="'+(liveSort==='best'?'primary':'')+'" onclick="setLiveSort(\'best\')">Ordina per stima più alta</button><button class="'+(liveSort==='goal'?'primary':'')+'" onclick="setLiveSort(\'goal\')">Ordina per probabilità gol</button><button class="'+(liveSort==='ga'?'primary':'')+'" onclick="setLiveSort(\'ga\')">Ordina per gol o assist</button></div>'+list.map(p=>{
  const canGoal=Boolean(p.eligibleForBet&&Number(p.goalProbability)>=45);
  const canGA=Boolean(p.eligibleForBet&&Number(p.gaProbability)>=58);
  const disabled=' disabled title="Attendi formazione ufficiale e requisiti statistici"';
