@@ -415,7 +415,7 @@ module.exports = async function handler(req, res) {
         if(!playersByKey.has(key))playersByKey.set(key,{
           id:String(player.id),name:player.name,team:teamId===homeId?home.name:away.name,teamId,
           position:positionName(player.position_id),goals:0,assists:0,appearances:0,minutes:0,
-          statsShots:0,shots:0,shotsOnTarget:0,xg:0,keyPasses:0,statsSeason:'ultime 5 partite concluse',
+          statsShots:0,statsShotsOnTarget:0,statsXg:0,shots:0,shotsOnTarget:0,xg:0,keyPasses:0,statsSeason:'ultime 5 partite concluse',
           source:'PitchAPI player stats + shots/xG',starter:false,lineupKnown:false,lineupConfirmed:false,lineupType:'',injured:false,
           _appearanceMatches:new Set(),_shotMatches:new Set()
         });
@@ -425,8 +425,8 @@ module.exports = async function handler(req, res) {
           entry.goals+=getStat(p,'goals');entry.assists+=getStat(p,'assists');
           entry.minutes+=statAny(p,['minutes_played','minutes']);
           entry.statsShots+=statAny(p,['total_shots','shots']);
-          entry.shotsOnTarget+=statAny(p,['shots_on_target']);
-          entry.xg+=statAny(p,['expected_goals','xg']);
+          entry.statsShotsOnTarget+=statAny(p,['shots_on_target']);
+          entry.statsXg+=statAny(p,['expected_goals','xg']);
           entry.keyPasses+=statAny(p,['key_passes','chances_created']);
         }
       }
@@ -437,7 +437,7 @@ module.exports = async function handler(req, res) {
         if(!playersByKey.has(key))playersByKey.set(key,{
           id:String(player.id),name:player.name||'Giocatore',team:teamId===homeId?home.name:away.name,teamId,
           position:positionName(player.position_id),goals:0,assists:0,appearances:0,minutes:0,
-          statsShots:0,shots:0,shotsOnTarget:0,xg:0,keyPasses:0,statsSeason:'ultime 5 partite concluse',
+          statsShots:0,statsShotsOnTarget:0,statsXg:0,shots:0,shotsOnTarget:0,xg:0,keyPasses:0,statsSeason:'ultime 5 partite concluse',
           source:'PitchAPI shots + xG',starter:false,lineupKnown:false,lineupConfirmed:false,lineupType:'',injured:false,
           _appearanceMatches:new Set(),_shotMatches:new Set()
         });
@@ -457,13 +457,15 @@ module.exports = async function handler(req, res) {
         const officialSource=lineupPlayersById.get(String(p.id));
         const shotDataAvailable=p.shots>0;
         const shots=shotDataAvailable?p.shots:p.statsShots;
+        const shotsOnTarget=shotDataAvailable?p.shotsOnTarget:p.statsShotsOnTarget;
+        const xg=shotDataAvailable?p.xg:p.statsXg;
         const minutes=p.minutes>0?p.minutes:Math.max(1,p.appearances*70);
         const goalsPer90=p.goals/minutes*90;
         const gaPer90=(p.goals+p.assists)/minutes*90;
         const assistsPer90=p.assists/minutes*90;
-        const xgPer90=p.xg/minutes*90;
+        const xgPer90=xg/minutes*90;
         const shotsPer90=shots/minutes*90;
-        const onTargetPer90=p.shotsOnTarget/minutes*90;
+        const onTargetPer90=shotsOnTarget/minutes*90;
         const conversion=shots>0?p.goals/shots:0;
         const ownForm=teamForm.get(p.teamId)||{games:0,goalsFor:0,goalsAgainst:0,xgFor:0,xgAgainst:0,xgMatches:0};
         const opponentId=p.teamId===homeId?awayId:homeId;
@@ -510,7 +512,7 @@ module.exports = async function handler(req, res) {
           starter:lineupAvailable&&lineupPlayerIds.has(String(p.id)),lineupKnown:lineupAvailable,lineupConfirmed,lineupType,
           recentMatches:p.appearances,
           goalsPer90:Number(goalsPer90.toFixed(2)),assistsPer90:Number(assistsPer90.toFixed(2)),
-          shots:Number(shots.toFixed(1)),shotsOnTarget:Number(p.shotsOnTarget.toFixed(1)),xg:Number(p.xg.toFixed(2)),
+          shots:Number(shots.toFixed(1)),shotsOnTarget:Number(shotsOnTarget.toFixed(1)),xg:Number(xg.toFixed(2)),
           minutes:Number(minutes.toFixed(0)),minutesEstimated:!(p.minutes>0),
           teamXgPerMatch:Number(attackMetric.toFixed(2)),opponentXgaPerMatch:Number(defenseMetric.toFixed(2)),
           goalComponents,gaComponents,goalIndex,gaIndex
