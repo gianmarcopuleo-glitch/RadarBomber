@@ -5,9 +5,7 @@ const BASE = 'https://api.pitchapi.dev/v1';
 const LEAGUE_PRIORITY = [
   // Campionati nazionali: il catalogo PitchAPI e il Paese evitano omonimie.
   'Serie A','Premier League','La Liga','Bundesliga','Ligue 1',
-  'Eredivisie','Primeira Liga','Liga Portugal','Saudi Pro League',
-  'Roshn Saudi League','Super Lig','Süper Lig',
-  'Belgian Pro League','Jupiler Pro League',
+  'Eredivisie','Primeira Liga','Liga Portugal',
   // Solo competizioni UEFA identificate esplicitamente.
   'UEFA Champions League','UEFA Europa League','UEFA Conference League',
   'UEFA Nations League','European Championship','UEFA Euro','Europei',
@@ -18,26 +16,25 @@ const LEAGUE_PRIORITY = [
 const normalize = s => String(s || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 const allowed = name => LEAGUE_PRIORITY.some(x => normalize(x) === normalize(name));
 const DOMESTIC_COUNTRY = {
-  'serie a':['italy','italia'],
-  'premier league':['england','inghilterra'],
-  'la liga':['spain','spagna'],
-  'bundesliga':['germany','germania'],
-  'ligue 1':['france','francia'],
-  'eredivisie':['netherlands','the netherlands','paesi bassi','holland'],
-  'primeira liga':['portugal'],
-  'liga portugal':['portugal'],
-  'saudi pro league':['saudi arabia','arabia saudita'],
-  'roshn saudi league':['saudi arabia','arabia saudita'],
-  'super lig':['turkey','türkiye','turchia'],
-  'belgian pro league':['belgium','belgio'],
-  'jupiler pro league':['belgium','belgio']
+  'serie a': { names:['italy','italia'], codes:['ita','it'] },
+  'premier league': { names:['england','inghilterra'], codes:['eng','gb-eng'] },
+  'la liga': { names:['spain','spagna'], codes:['esp','es'] },
+  'bundesliga': { names:['germany','germania'], codes:['ger','de'] },
+  'ligue 1': { names:['france','francia'], codes:['fra','fr'] },
+  'eredivisie': { names:['netherlands','the netherlands','paesi bassi','holland'], codes:['ned','nld','nl'] },
+  'primeira liga': { names:['portugal'], codes:['por','pt'] },
+  'liga portugal': { names:['portugal'], codes:['por','pt'] }
 };
 const allowedLeague = league => {
   if (!league || !allowed(league.name)) return false;
   const expected = DOMESTIC_COUNTRY[normalize(league.name)];
   if (!expected) return true;
+  // PitchAPI's documented league catalogue supplies country_code, not country.
+  // Accept either field so the allowlist works with both catalogue and fixture shapes.
   const country = normalize(league.country || '');
-  return expected.some(c => normalize(c) === country);
+  const code = normalize(league.country_code || '');
+  return expected.names.some(c => normalize(c) === country) ||
+    expected.codes.some(c => normalize(c) === code);
 };
 const indexFromRecent = (goals, assists, games, kind) => {
   if (!games) return 0;
@@ -152,8 +149,10 @@ module.exports = async function handler(req, res) {
       const homeType = normalize(lineupData.home && lineupData.home.lineup_type || '');
       const awayType = normalize(lineupData.away && lineupData.away.lineup_type || '');
       // "lastStarting11" è l'ultimo undici noto, non una previsione della partita.
-      const onlyLastKnownXI = !homeConfirmed && !awayConfirmed &&
-        homeType === 'laststarting11' && awayType === 'laststarting11';
+      // Reject the whole lineup if either side is only the provider's last known XI.
+      // Mixing a current prediction for one team with a historical XI for the other is unsafe.
+      const onlyLastKnownXI = (!homeConfirmed && homeType === 'laststarting11') ||
+        (!awayConfirmed && awayType === 'laststarting11');
       if (lineupTeamsMatch && homeStarters.length && awayStarters.length && !onlyLastKnownXI) {
         for (const [side, teamId] of [[homeStarters, homeId], [awayStarters, awayId]]) {
           for (const p of side) {
