@@ -1,0 +1,65 @@
+// RadarBomber API proxy for API-Football. Keep API_FOOTBALL_KEY in Vercel Environment Variables.
+const BASE = 'https://v3.football.api-sports.io';
+const ALLOWED_LEAGUES = new Set([39, 140, 135, 78, 61, 2, 3, 848, 45, 143, 94, 88]);
+async function api(path) {
+  const key = process.env.API_FOOTBALL_KEY;
+  if (!key) { const e = new Error('Chiave API non configurata'); e.status = 503; throw e; }
+  const response = await fetch(BASE + path, { headers: { 'x-apisports-key': key }, signal: AbortSignal.timeout(9000) });
+  const json = await response.json();
+  if (!response.ok || (json.errors && Object.keys(json.errors).length)) {
+    const detail = json.errors ? JSON.stringify(json.errors) : 'Errore provider';
+    const e = new Error('API-Football: ' + detail); e.status = response.status || 502; throw e;
+  }
+  return json.response || [];
+}
+const num = v => Number(v || 0);
+function indexFor(goals, assists, minutes, apps, kind) {
+  if (!apps || !minutes) return 0;
+  const per90Goal = goals / Math.max(minutes / 90, 1);
+  const per90GA = (goals + assists) / Math.max(minutes / 90, 1);
+  const base = kind === 'goal' ? per90Goal : per90GA;
+  const score = 100 * (1 - Math.exp(-base * (kind === 'goal' ? 1.35 : 1.0))) * Math.min(1, apps / 4);
+  return Math.max(0, Math.min(99, Math.round(score)));
+}
+module.exports = async function handler(req, res) {
+  res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=300');
+  try {
+    const date = String(req.query.date || new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Rome' }));
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { res.status(400).json({error:'Data non valida'}); return; }
+    if (!req.query.fixture) {
+      const fixtures = await api('/fixtures?date=' + date + '&timezone=Europe%2FRome');
+      const selected = fixtures.filter(f => ALLOWED_LEAGUES.has(Number(f.league && f.league.id)));
+      res.status(200).json({message:'Partite aggiornate alle ' + new Date().toLocaleTimeString('it-IT') + '. Selezione di competizioni principali; dati memorizzati in cache per 5 minuti.', fixtures:selected.map(f=>({id:f.fixture.id,home:f.teams.home.name,away:f.teams.away.name,league:f.league.name,time:f.fixture.date?new Date(f.fixture.date).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Rome'}):'',status:f.fixture.status.short}))});
+      return;
+    }
+    const fixtureId = Number(req.query.fixture);
+    if (!Number.isInteger(fixtureId) || fixtureId < 1) { res.status(400).json({error:'Partita non valida'}); return; }
+    const fixtures = await api('/fixtures?id=' + fixtureId);
+    const fixture = fixtures[0];
+    if (!fixture) { res.status(404).json({error:'Partita non trovata'}); return; }
+    const season = Number(String(fixture.fixture.date || date).slice(0,4)) - (Number(String(fixture.fixture.date || date).slice(5,7)) < 7 ? 1 : 0);
+    const [lineups, homePlayers, awayPlayers, injuries] = await Promise.all([
+      api('/fixtures/lineups?fixture=' + fixtureId),
+      api('/players?team=' + fixture.teams.home.id + '&season=' + season + '&league=' + fixture.league.id + '&page=1'),
+      api('/players?team=' + fixture.teams.away.id + '&season=' + season + '&league=' + fixture.league.id + '&page=1'),
+      api('/injuries?fixture=' + fixtureId)
+    ]);
+    const lineupKnown = lineups.length > 0;
+    const starters = new Set(lineups.flatMap(t => (t.startXI || []).map(p => String(p.player && p.player.id))));
+    const injured = new Set(injuries.map(i => String(i.player && i.player.id)));
+    const players = [];
+    for (const group of [{team:fixture.teams.home.name,data:homePlayers},{team:fixture.teams.away.name,data:awayPlayers}]) {
+      for (const row of group.data) {
+        const p = row.player || {}, st = (row.statistics || [])[0] || {};
+        const id = String(p.id || '');
+        const goals = num(st.goals && st.goals.total), assists = num(st.goals && st.goals.assists), minutes = num(st.games && st.games.minutes), apps = num(st.games && st.games.appearences);
+        if (!p.name || minutes < 90 || (lineupKnown && !starters.has(id)) || injured.has(id)) continue;
+        players.push({name:p.name,team:group.team,position:st.games && st.games.position || '',goals,assists,minutes,starter:starters.has(id),lineupKnown,injured:injured.has(id),goalIndex:indexFor(goals,assists,minutes,apps,'goal'),gaIndex:indexFor(goals,assists,minutes,apps,'ga')});
+      }
+    }
+    players.sort((a,b)=>Math.max(b.goalIndex,b.gaIndex)-Math.max(a.goalIndex,a.gaIndex));
+    res.status(200).json({message:(lineupKnown?'Formazioni pubblicate dal provider.':'Formazioni non ancora pubblicate: elenco provvisorio.')+' Indici basati su statistiche stagionali; non sono probabilità calibrate.',players:players.slice(0,24)});
+  } catch (error) {
+    res.status(error.status || 502).json({error:error.status===503?'Chiave API mancante: aggiungi API_FOOTBALL_KEY nelle Environment Variables del progetto Vercel.':(error.message || 'Errore temporaneo del provider')});
+  }
+};
