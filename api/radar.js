@@ -118,6 +118,25 @@ const contextMultiplier = (attack, defense) => {
   return Math.max(0.72, Math.min(1.28, Math.sqrt(a * d)));
 };
 const rateScore = (value, ceiling) => clamp((Math.max(0, value || 0) / ceiling) * 100);
+// Accettiamo il ruolo di rigorista soltanto quando il provider espone un campo esplicito.
+// Non deduciamo il rigorista dal solo numero di rigori trasformati.
+function designatedPenaltyTaker(player) {
+  const values=[
+    player?.penalty_taker,player?.penaltyTaker,player?.is_penalty_taker,
+    player?.isPenaltyTaker,player?.designated_penalty_taker,player?.designatedPenaltyTaker,
+    player?.penalties?.taker,player?.penalties?.is_taker,player?.penalty_order,player?.penaltyOrder
+  ];
+  for(const value of values){
+    if(typeof value==='boolean') return value;
+    if(typeof value==='number' && Number.isFinite(value)) return value>0;
+    if(typeof value==='string'){
+      const v=normalize(value);
+      if(['true','yes','si','designated','first','primary','1'].includes(v)) return true;
+      if(['false','no','not designated','0','none'].includes(v)) return false;
+    }
+  }
+  return null;
+}
 const statAny = (player, keys) => {
   for (const key of keys) {
     const value = getStat(player, key);
@@ -645,11 +664,13 @@ module.exports = async function handler(req, res) {
         const teamOdds = p.teamId===homeId ? homeOdds : awayOdds;
         // Se mancano quote, usiamo un valore neutro: l'assenza del dato non penalizza il candidato.
         const matchOddsScore = oddsAvailable ? oddsSideScore(teamOdds) : 50;
+        const penaltyTaker=designatedPenaltyTaker(p);
+        const penaltyTakerScore=penaltyTaker===true?100:penaltyTaker===false?0:50;
         const goalIndex=weighted([
-          [goalComponents.recentGoals,16],[goalComponents.expectedGoals,19],[goalComponents.shotVolume,13],
-          [goalComponents.shotsOnTarget,8],[goalComponents.finishing,6],[goalComponents.teamAttack,6],
+          [goalComponents.recentGoals,14],[goalComponents.expectedGoals,18],[goalComponents.shotVolume,13],
+          [goalComponents.shotsOnTarget,8],[goalComponents.finishing,5],[goalComponents.teamAttack,6],
           [goalComponents.opponentDefense,6],[goalComponents.homeAdvantage,8],[goalComponents.minutes,3],
-          [matchOddsScore,5],[h2hGoalScore,10]
+          [matchOddsScore,5],[h2hGoalScore,10],[penaltyTakerScore,4]
         ]);
         const gaIndex=weighted([
           [gaComponents.goalContributions,13],[gaComponents.expectedGoals,16],[gaComponents.shotVolume,11],
@@ -677,10 +698,14 @@ module.exports = async function handler(req, res) {
         const h2hGaRate=h2hStats.appearances?h2hStats.gaMatches/h2hStats.appearances:0;
         const h2hGoalFactor=1+Math.min(0.12,h2hGoalRate*0.12);
         const h2hGaFactor=1+Math.min(0.10,h2hGaRate*0.10);
-        const combinedGoalFactor=Math.min(1.30,oddsFactor*venueFactor*h2hGoalFactor);
-        const combinedGaFactor=Math.min(1.28,oddsFactor*venueFactor*h2hGaFactor);
+        // Un rigorista designato riceve un bonus moderato, solo se il provider lo dichiara esplicitamente.
+        const penaltyTakerFactor=penaltyTaker===true?1.12:1.00;
+        const penaltyGaFactor=penaltyTaker===true?1.05:1.00;
+        const combinedGoalFactor=Math.min(1.35,oddsFactor*venueFactor*h2hGoalFactor*penaltyTakerFactor);
+        const combinedGaFactor=Math.min(1.30,oddsFactor*venueFactor*h2hGaFactor*penaltyGaFactor);
         const matchOddsContext = {homeOdds,awayOdds,teamOdds,favorite:matchOdds?.favorite||null,bookmakersCount:matchOdds?.bookmakersCount||0,score:matchOddsScore,factor:oddsFactor};
         const headToHeadContext = {matches:h2hMatches.length,playerMatches:h2hStats.appearances,goalMatches:h2hStats.goalMatches,gaMatches:h2hStats.gaMatches,goals:h2hStats.goals,assists:h2hStats.assists,goalRate:Number(h2hGoalRate.toFixed(2)),gaRate:Number(h2hGaRate.toFixed(2)),goalFactor:h2hGoalFactor,gaFactor:h2hGaFactor};
+        const penaltyContext={designated:penaltyTaker,factor:penaltyTakerFactor,gaFactor:penaltyGaFactor,source:penaltyTaker===null?'dato non disponibile':'campo esplicito del provider'};
         const expectedMinutes=Math.max(0,Math.min(90,
           lineupConfirmed?Math.max(65,Math.min(85,minutes/Math.max(1,appearances))):
           lineupAvailable?Math.max(55,Math.min(78,minutes/Math.max(1,appearances))):
@@ -703,7 +728,7 @@ module.exports = async function handler(req, res) {
           shots:Number(shots.toFixed(1)),shotsOnTarget:Number(shotsOnTarget.toFixed(1)),xg:Number(xg.toFixed(2)),
           minutes:Number(minutes.toFixed(0)),minutesEstimated:!(p.minutes>0),
           teamXgPerMatch:Number(attackMetric.toFixed(2)),opponentXgaPerMatch:Number(defenseMetric.toFixed(2)),
-          goalComponents,gaComponents,goalIndex,gaIndex,matchOddsContext,headToHeadContext,venueFactor,
+          goalComponents,gaComponents,goalIndex,gaIndex,matchOddsContext,headToHeadContext,venueFactor,penaltyContext,
           goalProbability,gaProbability,confidenceScore,eligibleForBet,expectedMinutes,
           probabilityModel:'poisson-shrunk-v2-h2h-home'
         };
@@ -723,7 +748,7 @@ module.exports = async function handler(req, res) {
       : 'Nessun giocatore con gol o assist rilevati nelle ultime partite concluse disponibili per questa gara. ' + diagnostics.join(' | ');
     // L'analisi non va memorizzata a lungo: rose e formazioni possono cambiare.
     res.setHeader('Cache-Control','no-store, max-age=0');
-    return res.status(200).json({message,diagnostics,matchOdds:{available:oddsAvailable,homeOdds,awayOdds,favorite:matchOdds?.favorite||null,bookmakersCount:matchOdds?.bookmakersCount||0},headToHead:{matches:h2hMatches.length,playerStatsMatches:h2hPlayerResults.filter(r=>(r.players||[]).length>0).length,results:h2hMatches.map(m=>{const result=h2hPlayerResults.find(r=>String(r.match._matchId)===String(m._matchId));const scorerRows=(result&&result.players||[]).map(row=>({row,goals:getStat(row,'goals'),assists:getStat(row,'assists')})).filter(x=>x.goals>0);return {date:matchDateKey(m),home:m.home&&m.home.name||m.home_team&&m.home_team.name||'',away:m.away&&m.away.name||m.away_team&&m.away_team.name||'',scoreHome:m.score_home,scoreAway:m.score_away,playerStatsAvailable:Boolean(result&&(result.players||[]).length),scorers:scorerRows.map(x=>({name:x.row.player&&x.row.player.name||'Giocatore',team:String(x.row.team_id)===homeId?home.name:away.name,goals:x.goals,assists:x.assists}))};})},model:'poisson-shrunk-v2-h2h-home',weights:{goal:{recentGoals:16,xG:19,shots:13,shotsOnTarget:8,finishing:6,teamAttack:6,opponentDefense:6,homeAdvantage:8,minutes:3,matchOdds:5,headToHead:10},goalAssist:{goalContributions:13,xG:16,shots:11,shotsOnTarget:8,assists:12,chanceCreation:7,teamAttack:5,opponentDefense:6,homeAdvantage:8,minutes:2,matchOdds:4,headToHead:8}},teamContext:{home:teamForm.get(homeId),away:teamForm.get(awayId)},players:players.slice(0,24)});
+    return res.status(200).json({message,diagnostics,matchOdds:{available:oddsAvailable,homeOdds,awayOdds,favorite:matchOdds?.favorite||null,bookmakersCount:matchOdds?.bookmakersCount||0},headToHead:{matches:h2hMatches.length,playerStatsMatches:h2hPlayerResults.filter(r=>(r.players||[]).length>0).length,results:h2hMatches.map(m=>{const result=h2hPlayerResults.find(r=>String(r.match._matchId)===String(m._matchId));const scorerRows=(result&&result.players||[]).map(row=>({row,goals:getStat(row,'goals'),assists:getStat(row,'assists')})).filter(x=>x.goals>0);return {date:matchDateKey(m),home:m.home&&m.home.name||m.home_team&&m.home_team.name||'',away:m.away&&m.away.name||m.away_team&&m.away_team.name||'',scoreHome:m.score_home,scoreAway:m.score_away,playerStatsAvailable:Boolean(result&&(result.players||[]).length),scorers:scorerRows.map(x=>({name:x.row.player&&x.row.player.name||'Giocatore',team:String(x.row.team_id)===homeId?home.name:away.name,goals:x.goals,assists:x.assists}))};})},model:'poisson-shrunk-v3-penalty-h2h-home',weights:{goal:{recentGoals:14,xG:18,shots:13,shotsOnTarget:8,finishing:5,teamAttack:6,opponentDefense:6,homeAdvantage:8,minutes:3,matchOdds:5,headToHead:10,designatedPenaltyTaker:4},goalAssist:{goalContributions:13,xG:16,shots:11,shotsOnTarget:8,assists:12,chanceCreation:7,teamAttack:5,opponentDefense:6,homeAdvantage:8,minutes:2,matchOdds:4,headToHead:8}},teamContext:{home:teamForm.get(homeId),away:teamForm.get(awayId)},players:players.slice(0,24)});
   } catch (error) {
     res.setHeader('Cache-Control','no-store, max-age=0');
     const status = error.status || 502;
