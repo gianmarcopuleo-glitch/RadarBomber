@@ -1,12 +1,13 @@
 // RadarBomber — primary data source: PitchAPI (free plan, current fixtures and match player stats).
 const BASE = 'https://api.pitchapi.dev/v1';
-const ALLOWED_LEAGUES = [
-  'Premier League','La Liga','Serie A','Bundesliga','Ligue 1','Primeira Liga','Eredivisie',
-  'Champions League','UEFA Champions League','Europa League','UEFA Europa League',
-  'Conference League','UEFA Conference League','FA Cup','Copa del Rey','Coppa Italia',
-  'DFB-Pokal','Coupe de France','Taça de Portugal','KNVB Beker','Scottish Premiership',
-  'Championship','Serie B','Segunda División','2. Bundesliga','Ligue 2'
+// Solo competizioni di prima fascia: evitiamo seconde divisioni e coppe minori.
+const LEAGUE_PRIORITY = [
+  'Premier League','Serie A','La Liga','Bundesliga','Ligue 1',
+  'UEFA Champions League','Champions League',
+  'UEFA Europa League','Europa League',
+  'UEFA Conference League','Conference League'
 ];
+const ALLOWED_LEAGUES = LEAGUE_PRIORITY;
 const normalize = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 const allowed = name => ALLOWED_LEAGUES.some(x => normalize(x) === normalize(name));
 const indexFromRecent = (goals, assists, games, kind) => {
@@ -56,14 +57,23 @@ module.exports = async function handler(req, res) {
     if (!req.query.fixture) {
       const result = await pitch('/date/' + encodeURIComponent(date) + '?status=upcoming');
       const matches = Array.isArray(result.matches) ? result.matches : [];
-      const fixtures = matches.filter(m => allowed(m.league && m.league.name)).slice(0,60).map(m => ({
-        id: String(m.id),
-        home: m.home_team && m.home_team.name || 'Squadra casa',
-        away: m.away_team && m.away_team.name || 'Squadra ospite',
-        league: m.league && m.league.name || 'Competizione',
-        time: m.time_utc ? new Date(m.time_utc).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',timeZone:'Europe/Rome'}) : date,
-        status: m.status || 'In programma'
-      }));
+      const fixtures = matches
+        .filter(m => allowed(m.league && m.league.name))
+        .sort((a,b) => {
+          const pa = LEAGUE_PRIORITY.findIndex(x => normalize(x) === normalize(a.league && a.league.name));
+          const pb = LEAGUE_PRIORITY.findIndex(x => normalize(x) === normalize(b.league && b.league.name));
+          return (pa < 0 ? 999 : pa) - (pb < 0 ? 999 : pb) ||
+            String(a.time_utc || '').localeCompare(String(b.time_utc || ''));
+        })
+        .slice(0,24)
+        .map(m => ({
+          id: String(m.id),
+          home: m.home_team && m.home_team.name || 'Squadra casa',
+          away: m.away_team && m.away_team.name || 'Squadra ospite',
+          league: m.league && m.league.name || 'Competizione',
+          time: m.time_utc ? new Date(m.time_utc).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',timeZone:'Europe/Rome'}) : date,
+          status: m.status || 'In programma'
+        }));
       const message = fixtures.length
         ? 'Calendario aggiornato da PitchAPI. Analisi giocatori basata sui dati delle partite recenti disponibili; copertura limitata alle competizioni elencate nei filtri.'
         : 'PitchAPI non restituisce partite in programma nelle competizioni selezionate per questa data. Prova un’altra data o verifica la copertura del campionato.';
@@ -80,6 +90,20 @@ module.exports = async function handler(req, res) {
     const homeId = String(home.id || '');
     const awayId = String(away.id || '');
     if (!homeId || !awayId) return res.status(502).json({error:'PitchAPI non ha restituito gli identificativi delle due squadre.'});
+
+    // Per evitare giocatori rimasti associati a una vecchia squadra, accettiamo solo
+    // gli ID presenti nella formazione prevista/confermata della partita selezionata.
+    let lineupPlayerIds = new Set();
+    let lineupAvailable = false;
+    try {
+      const lineupData = await pitch('/matches/' + encodeURIComponent(fixtureId) + '/lineups');
+      for (const side of [lineupData.home, lineupData.away]) {
+        for (const p of [...(side && side.starters || []), ...(side && side.bench || [])]) {
+          if (p && p.player_id) lineupPlayerIds.add(String(p.player_id));
+        }
+      }
+      lineupAvailable = lineupPlayerIds.size > 0;
+    } catch {}
 
     // Get the current seasons for the supported leagues and search the most recent completed
     // fixtures involving either team. No historic-season fallback is used.
@@ -141,7 +165,10 @@ module.exports = async function handler(req, res) {
       }
     }
     const players = [...playersByKey.values()]
-      .filter(p=>p.goals>0||p.assists>0)
+      // Se il provider non pubblica ancora una formazione, non mostriamo nomi che
+      // potrebbero appartenere a rose precedenti. Quando è disponibile, la formazione
+      // è l'unica lista autorizzata per questa partita.
+      .filter(p=>lineupAvailable && lineupPlayerIds.has(String(p.id)) && (p.goals>0||p.assists>0))
       .map(p=>({...p,
         goalIndex:indexFromRecent(p.goals,p.assists,Math.max(1,p.recentMatches),'goal'),
         gaIndex:indexFromRecent(p.goals,p.assists,Math.max(1,p.recentMatches),'ga')
@@ -152,9 +179,12 @@ module.exports = async function handler(req, res) {
     if (!uniqueMatches.length) diagnostics.push('Non sono state trovate partite concluse recenti per entrambe le squadre nei campionati coperti.');
     diagnostics.push('Fonte: PitchAPI. Indici comparativi derivati da gol e assist nelle partite recenti; non sono probabilità calibrate. Formazioni e infortuni non sono verificati.');
     const message = players.length
-      ? 'Radar forma recente: giocatori con gol o assist rilevati nelle partite concluse più recenti. ' + diagnostics.join(' | ')
-      : 'Nessun gol o assist individuale rilevato nelle partite recenti disponibili su PitchAPI. Non vengono mostrati dati storici come attuali. ' + diagnostics.join(' | ');
-    res.setHeader('Cache-Control',players.length?'s-maxage=21600, stale-while-revalidate=86400':'s-maxage=600, stale-while-revalidate=1200');
+      ? 'Radar forma recente: giocatori con gol o assist nelle ultime gare, verificati anche nella formazione prevista/confermata della partita selezionata. ' + diagnostics.join(' | ')
+      : !lineupAvailable
+        ? 'Formazione prevista/confermata non ancora disponibile su PitchAPI: per evitare di mostrare giocatori di vecchie rose, la lista viene lasciata vuota. Riprova più vicino al calcio d’inizio.'
+        : 'Nessun giocatore della formazione pubblicata ha gol o assist rilevati nelle partite recenti disponibili. ' + diagnostics.join(' | ');
+    // L'analisi non va memorizzata a lungo: rose e formazioni possono cambiare.
+    res.setHeader('Cache-Control','no-store, max-age=0');
     return res.status(200).json({message,diagnostics,players:players.slice(0,24)});
   } catch (error) {
     res.setHeader('Cache-Control','no-store, max-age=0');
