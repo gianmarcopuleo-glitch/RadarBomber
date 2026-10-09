@@ -353,31 +353,51 @@ module.exports = async function handler(req, res) {
         })
         .filter(m => m.league && m.league.id != null &&
           supportedLeagueIds.has(String(m.league.id)) && allowedLeague(m.league));
-      const fixtures = eligibleMatches
-        .map(m=>({
-          id:String(m.id),
-          home:m.home_team&&m.home_team.name||'Squadra casa',
-          away:m.away_team&&m.away_team.name||'Squadra ospite',
-          league:m.league&&m.league.name||'Competizione',
-          time:m.time_utc?new Date(m.time_utc).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',timeZone:'Europe/Rome'}):date,
-          status:m.status||'In programma'
-        }))
-        .sort((a,b)=>{
-          const pa=LEAGUE_PRIORITY.findIndex(x=>canonicalLeague(x)===canonicalLeague(a.league));
-          const pb=LEAGUE_PRIORITY.findIndex(x=>canonicalLeague(x)===canonicalLeague(b.league));
-          return (pa<0?999:pa)-(pb<0?999:pb);
-        })
-        .slice(0,60);
+      // Le quote 1X2 sono un filtro obbligatorio PRIMA dell'analisi dei giocatori.
+      // Casa: favorita e quota <= 1,65. Trasferta: favorita e quota <= 1,55.
+      // Verifichiamo prima le partite dei campionati ammessi; la cache quote evita
+      // richieste ripetute alla stessa competizione.
+      const orderedEligibleMatches = eligibleMatches.slice().sort((a,b)=>{
+        const la=a.league&&a.league.name||'', lb=b.league&&b.league.name||'';
+        const pa=LEAGUE_PRIORITY.findIndex(x=>canonicalLeague(x)===canonicalLeague(la));
+        const pb=LEAGUE_PRIORITY.findIndex(x=>canonicalLeague(x)===canonicalLeague(lb));
+        return (pa<0?999:pa)-(pb<0?999:pb);
+      });
+      const oddsChecks = await Promise.all(orderedEligibleMatches.map(async m=>{
+        try {
+          const prices=await oddsForFixture(m);
+          if(!prices || prices.homeOdds==null || prices.awayOdds==null) return null;
+          const homeFavorite=prices.homeOdds<prices.awayOdds && prices.homeOdds<=1.65;
+          const awayFavorite=prices.awayOdds<prices.homeOdds && prices.awayOdds<=1.55;
+          if(!homeFavorite && !awayFavorite) return null;
+          return {m,prices,favorite:homeFavorite?'home':'away'};
+        } catch { return null; }
+      }));
+      const qualifiedMatches=oddsChecks.filter(Boolean);
+      const fixtures = qualifiedMatches.slice(0,60).map(({m,prices,favorite})=>({
+        id:String(m.id),
+        home:m.home_team&&m.home_team.name||'Squadra casa',
+        away:m.away_team&&m.away_team.name||'Squadra ospite',
+        league:m.league&&m.league.name||'Competizione',
+        time:m.time_utc?new Date(m.time_utc).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',timeZone:'Europe/Rome'}):date,
+        status:m.status||'In programma',
+        homeOdds:prices.homeOdds,
+        awayOdds:prices.awayOdds,
+        favorite,
+        favoriteTeam:favorite==='home'?(m.home_team&&m.home_team.name||'Squadra casa'):(m.away_team&&m.away_team.name||'Squadra ospite'),
+        oddsFilter:favorite==='home'?'Casa ≤ 1,65':'Trasferta ≤ 1,55',
+        bookmakersCount:prices.bookmakersCount||0
+      }));
       const leagueCounts={};
       for(const m of matches){const n=m.league&&m.league.name||'Senza competizione';leagueCounts[n]=(leagueCounts[n]||0)+1;}
       const eligibleLeagueCounts={};
       for(const m of eligibleMatches){const n=m.league&&m.league.name||'Senza competizione';eligibleLeagueCounts[n]=(eligibleLeagueCounts[n]||0)+1;}
       const diagnostics={date,providerFixtures:matches.length,catalogLeagues:catalogLeagues.length,eligibleFixtures:eligibleMatches.length,qualifyingFixtures:fixtures.length,providerLeagueCounts:leagueCounts,eligibleLeagueCounts};
       const message=fixtures.length
-        ? 'Partite filtrate per competizioni ammesse. Le quote delle squadre non vengono utilizzate: saranno analizzati i giocatori di entrambe le squadre.'
-        : 'Nessuna partita delle competizioni selezionate risulta disponibile su PitchAPI per questa data. Prova un altro giorno.';
+        ? 'Filtro obbligatorio applicato: favorita in casa ≤ 1,65 oppure favorita in trasferta ≤ 1,55. Sono incluse solo partite con quote 1X2 disponibili; nell’analisi saranno valutati i giocatori della sola squadra favorita.'
+        : 'Nessuna partita delle competizioni ammesse supera il filtro quote: favorita in casa ≤ 1,65 oppure favorita in trasferta ≤ 1,55. Le partite senza quote disponibili sono escluse.';
       res.setHeader('Cache-Control','s-maxage=60, stale-while-revalidate=60');
-      return res.status(200).json({date,mode:'pitchapi',message,totalFixturesFromProvider:matches.length,filteredFixtures:fixtures.length,diagnostics,fixtures});
+      return res.status(200).json({date,mode:'pitchapi',message,totalFixturesFromProvider:matches.length,eligibleFixtures:eligibleMatches.length,qualifiedByOdds:qualifiedMatches.length,filteredFixtures:fixtures.length,oddsRules:{homeFavoriteMax:1.65,awayFavoriteMax:1.55,missingOdds:'exclude'},diagnostics,fixtures});
     }
 
     const fixtureId = String(req.query.fixture || '');
@@ -385,13 +405,23 @@ module.exports = async function handler(req, res) {
     const fixture = await pitch('/matches/' + encodeURIComponent(fixtureId));
     if (!fixture || !fixture.id) return res.status(404).json({error:'Partita non trovata su PitchAPI.'});
     if (!allowedLeague(fixture.league)) return res.status(403).json({error:'Competizione esclusa: sono ammesse solo le competizioni principali selezionate.'});
-    // Quote 1X2: indicatore del mercato sulla forza della squadra, non una quota giocatore.
-    // Se il provider quote non è disponibile, l'analisi statistica continua senza bonus.
+    // Il filtro quote è vincolante anche aprendo direttamente una partita:
+    // nessuna analisi se mancano le quote o se la favorita supera la soglia prevista.
     let matchOdds = null;
     try { matchOdds = await oddsForFixture(fixture); } catch {}
     const homeOdds = matchOdds && Number.isFinite(Number(matchOdds.homeOdds)) ? Number(matchOdds.homeOdds) : null;
     const awayOdds = matchOdds && Number.isFinite(Number(matchOdds.awayOdds)) ? Number(matchOdds.awayOdds) : null;
     const oddsAvailable = homeOdds !== null && awayOdds !== null;
+    const homeIsQualifiedFavorite = oddsAvailable && homeOdds < awayOdds && homeOdds <= 1.65;
+    const awayIsQualifiedFavorite = oddsAvailable && awayOdds < homeOdds && awayOdds <= 1.55;
+    if (!homeIsQualifiedFavorite && !awayIsQualifiedFavorite) {
+      return res.status(422).json({error:!oddsAvailable
+        ? 'Partita esclusa: quote 1X2 non disponibili. Il filtro quote è obbligatorio.'
+        : 'Partita esclusa dal filtro quote: favorita in casa ≤ 1,65 oppure favorita in trasferta ≤ 1,55.',
+        odds:{home:homeOdds,away:awayOdds},rules:{homeFavoriteMax:1.65,awayFavoriteMax:1.55}});
+    }
+    const favoriteSide = homeIsQualifiedFavorite ? 'home' : 'away';
+    const favoriteTeamId = homeIsQualifiedFavorite ? String(fixture.home_team&&fixture.home_team.id||'') : String(fixture.away_team&&fixture.away_team.id||'');
     const oddsSideScore = odds => odds == null ? 0 : odds <= 1.50 ? 92 : odds <= 1.75 ? 82 : odds <= 2.00 ? 72 : odds <= 2.50 ? 60 : odds <= 3.25 ? 45 : 30;
     const home = fixture.home_team || {};
     const away = fixture.away_team || {};
@@ -638,7 +668,7 @@ module.exports = async function handler(req, res) {
       return xt.length>0&&yt.length>0&&xt[xt.length-1]===yt[yt.length-1]&&xt[xt.length-1].length>=4;
     };
     const players = [...playersByKey.values()]
-      .filter(p=>p.position!=='Portiere' && (p.position==='Attaccante'||p.position==='Centrocampista'||p.goals>0||p.assists>0||p.shots>0||p.xg>0||p.statsShots>0||p.keyPasses>0))
+      .filter(p=>p.teamId===favoriteTeamId && p.position!=='Portiere' && (p.position==='Attaccante'||p.position==='Centrocampista'||p.goals>0||p.assists>0||p.shots>0||p.xg>0||p.statsShots>0||p.keyPasses>0))
       .map(p=>{
         const officialSource=lineupPlayersById.get(String(p.id)) || [...lineupPlayersById.values()].find(o=>o.teamId===p.teamId&&samePlayerName(o.name,p.name));
         const isCurrentStarter=Boolean(officialSource);
@@ -772,7 +802,7 @@ module.exports = async function handler(req, res) {
     diagnostics.push('Precedenti diretti: '+h2hMatches.length+' partite trovate, '+h2hPlayerResults.filter(r=>(r.players||[]).length>0).length+' con statistiche individuali recuperabili.');
     diagnostics.push('Fonte: PitchAPI. Il modello combina rendimento recente, tiri/xG, attacco squadra, difesa avversaria, quote 1X2, vantaggio casa più marcato (coefficiente 1,14 contro 1,04 in trasferta) e precedenti diretti individuali. I bonus H2H sono limitati e applicati solo se i dati del giocatore sono disponibili; non sono probabilità calibrate. Quote 1X2 non sono quote del mercato marcatore. I valori mancanti non vengono inventati; minuti stimati solo se il provider non li riporta.');
     const message = players.length
-      ? 'Analisi di entrambe le squadre con coefficiente casa/trasferta e precedenti diretti. '+(lineupConfirmed
+      ? 'Analisi della sola squadra favorita ('+(favoriteSide==='home'?'casa':'trasferta')+', quota '+(favoriteSide==='home'?homeOdds:awayOdds)+'). '+(lineupConfirmed
           ? 'Formazione ufficiale pubblicata: sono mostrati i titolari ufficiali.'
           : lineupAvailable
             ? 'Formazione disponibile: i titolari previsti sono favoriti; gli altri restano monitorabili ma non sono proposte giocabili.'
@@ -780,7 +810,7 @@ module.exports = async function handler(req, res) {
       : 'Nessun giocatore con gol o assist rilevati nelle ultime partite concluse disponibili per questa gara. ' + diagnostics.join(' | ');
     // L'analisi non va memorizzata a lungo: rose e formazioni possono cambiare.
     res.setHeader('Cache-Control','no-store, max-age=0');
-    return res.status(200).json({message,diagnostics,matchOdds:{available:oddsAvailable,homeOdds,awayOdds,favorite:matchOdds?.favorite||null,bookmakersCount:matchOdds?.bookmakersCount||0},headToHead:{matches:h2hMatches.length,playerStatsMatches:h2hPlayerResults.filter(r=>(r.players||[]).length>0).length,results:h2hMatches.map(m=>{const result=h2hPlayerResults.find(r=>String(r.match._matchId)===String(m._matchId));const scorerRows=(result&&result.players||[]).map(row=>({row,goals:getStat(row,'goals'),assists:getStat(row,'assists')})).filter(x=>x.goals>0);return {date:matchDateKey(m),home:m.home&&m.home.name||m.home_team&&m.home_team.name||'',away:m.away&&m.away.name||m.away_team&&m.away_team.name||'',scoreHome:m.score_home,scoreAway:m.score_away,playerStatsAvailable:Boolean(result&&(result.players||[]).length),scorers:scorerRows.map(x=>({name:x.row.player&&x.row.player.name||'Giocatore',team:String(x.row.team_id)===homeId?home.name:away.name,goals:x.goals,assists:x.assists}))};})},model:'poisson-shrunk-v4-expanded-candidates',weights:{goal:{recentGoals:14,xG:18,shots:13,shotsOnTarget:8,finishing:5,teamAttack:6,opponentDefense:6,homeAdvantage:8,minutes:3,matchOdds:5,headToHead:10,designatedPenaltyTaker:4},goalAssist:{goalContributions:13,xG:16,shots:11,shotsOnTarget:8,assists:12,chanceCreation:7,teamAttack:5,opponentDefense:6,homeAdvantage:8,minutes:2,matchOdds:4,headToHead:8}},teamContext:{home:teamForm.get(homeId),away:teamForm.get(awayId)},players:players.slice(0,40)});
+    return res.status(200).json({message,diagnostics,matchOdds:{available:oddsAvailable,homeOdds,awayOdds,favorite:favoriteSide, favoriteTeamId,homeThreshold:1.65,awayThreshold:1.55,bookmakersCount:matchOdds?.bookmakersCount||0},headToHead:{matches:h2hMatches.length,playerStatsMatches:h2hPlayerResults.filter(r=>(r.players||[]).length>0).length,results:h2hMatches.map(m=>{const result=h2hPlayerResults.find(r=>String(r.match._matchId)===String(m._matchId));const scorerRows=(result&&result.players||[]).map(row=>({row,goals:getStat(row,'goals'),assists:getStat(row,'assists')})).filter(x=>x.goals>0);return {date:matchDateKey(m),home:m.home&&m.home.name||m.home_team&&m.home_team.name||'',away:m.away&&m.away.name||m.away_team&&m.away_team.name||'',scoreHome:m.score_home,scoreAway:m.score_away,playerStatsAvailable:Boolean(result&&(result.players||[]).length),scorers:scorerRows.map(x=>({name:x.row.player&&x.row.player.name||'Giocatore',team:String(x.row.team_id)===homeId?home.name:away.name,goals:x.goals,assists:x.assists}))};})},model:'poisson-shrunk-v4-expanded-candidates',weights:{goal:{recentGoals:14,xG:18,shots:13,shotsOnTarget:8,finishing:5,teamAttack:6,opponentDefense:6,homeAdvantage:8,minutes:3,matchOdds:5,headToHead:10,designatedPenaltyTaker:4},goalAssist:{goalContributions:13,xG:16,shots:11,shotsOnTarget:8,assists:12,chanceCreation:7,teamAttack:5,opponentDefense:6,homeAdvantage:8,minutes:2,matchOdds:4,headToHead:8}},teamContext:{home:teamForm.get(homeId),away:teamForm.get(awayId)},players:players.slice(0,40)});
   } catch (error) {
     res.setHeader('Cache-Control','no-store, max-age=0');
     const status = error.status || 502;
