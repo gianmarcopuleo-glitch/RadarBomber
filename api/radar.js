@@ -39,7 +39,7 @@ const LEAGUE_ALIASES = {
   'european championship':'european championship','uefa euro':'european championship','europei':'european championship',
   'fifa world cup':'fifa world cup','world cup':'fifa world cup','mondiali':'fifa world cup',
   'uefa european qualifiers':'uefa european qualifiers','european qualifiers':'uefa european qualifiers',
-  'world cup qualification europe':'world cup qualification europe','uefa world cup qualifiers':'world cup qualification europe'
+  'world cup qualification europe':'world cup qualification europe','uefa world cup qualifiers':'world cup qualification europe',
   'portugal primeira liga':'primeira liga',
   'primeira division':'la liga',
   'primera division spain':'la liga',
