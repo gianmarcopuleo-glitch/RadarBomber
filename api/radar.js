@@ -191,12 +191,19 @@ module.exports = async function handler(req, res) {
           oddsSportForLeague(m.league.name));
       const sportKeys=[...new Set(eligibleMatches.map(m=>oddsSportForLeague(m.league.name)))];
       const oddsBySport=new Map();
+      const oddsErrors=[];
       await Promise.all(sportKeys.map(async sportKey=>{
-        try{oddsBySport.set(sportKey,await oddsEvents(sportKey))}catch{}
+        try{oddsBySport.set(sportKey,await oddsEvents(sportKey))}
+        catch(e){oddsErrors.push({sportKey,message:e.message,status:e.status||502})}
       }));
+      let matchedOddsEvents=0;
+      let eventsWithBothPrices=0;
       const fixtures = eligibleMatches
         .map(m=>{
-          const prices=matchOddsForFixture(m,oddsBySport.get(oddsSportForLeague(m.league.name))||[]);
+          const events=oddsBySport.get(oddsSportForLeague(m.league.name))||[];
+          const prices=matchOddsForFixture(m,events);
+          if(prices)matchedOddsEvents++;
+          if(prices && prices.homeOdds!=null && prices.awayOdds!=null)eventsWithBothPrices++;
           if(!prices||!prices.favorite)return null;
           return {
             id:String(m.id),
@@ -218,11 +225,25 @@ module.exports = async function handler(req, res) {
           return (pa<0?999:pa)-(pb<0?999:pb);
         })
         .slice(0,24);
-      const message = fixtures.length
-        ? 'Partite filtrate per competizioni di prima fascia e quote mediane 1X2: favorita casa ≤1,65 oppure favorita ospite ≤1,55. Le quote provengono da The Odds API.'
-        : 'Nessuna partita con quote disponibili rispetta le soglie: favorita casa ≤1,65 o favorita ospite ≤1,55. Verifica ODDS_API_KEY, piano e data selezionata.';
+      const diagnostics={date,providerFixtures:matches.length,eligibleFixtures:eligibleMatches.length,sportsRequested:sportKeys.length,sportsWithOddsData:oddsBySport.size,matchedOddsEvents,eventsWithBothPrices,qualifyingFixtures:fixtures.length,oddsErrors};
+      let message;
+      if(fixtures.length){
+        message='Partite filtrate per competizioni di prima fascia e quote mediane 1X2: favorita casa ≤1,65 oppure favorita ospite ≤1,55. Le quote provengono da The Odds API.';
+        if(oddsErrors.length)message+=' Attenzione: alcune competizioni non hanno restituito quote ('+oddsErrors.map(e=>e.sportKey).join(', ')+').';
+      }else if(!eligibleMatches.length){
+        message='Nessuna partita delle competizioni selezionate risulta disponibile su PitchAPI per questa data. Prova un altro giorno.';
+      }else if(oddsErrors.length && oddsBySport.size===0){
+        const first=oddsErrors[0];
+        message='Errore nel recupero quote da The Odds API: '+first.message+' Controlla ODDS_API_KEY, piano e competizioni abilitate.';
+      }else if(!matchedOddsEvents){
+        message='Le partite sono presenti, ma The Odds API non ha restituito eventi abbinabili per squadre e orario. Può dipendere da quote non ancora pubblicate, nomi diversi o copertura del piano.';
+      }else if(!eventsWithBothPrices){
+        message='Gli eventi sono stati abbinati, ma mancano quote 1X2 complete per casa e trasferta. Verifica la copertura della competizione nel piano The Odds API.';
+      }else{
+        message='Quote trovate, ma nessuna favorita rispetta le soglie: casa ≤1,65 oppure trasferta ≤1,55. Le soglie restano invariate; prova un’altra data.';
+      }
       res.setHeader('Cache-Control','s-maxage=60, stale-while-revalidate=60');
-      return res.status(200).json({date,mode:'pitchapi',message,totalFixturesFromProvider:matches.length,filteredFixtures:fixtures.length,fixtures});
+      return res.status(200).json({date,mode:'pitchapi',message,totalFixturesFromProvider:matches.length,filteredFixtures:fixtures.length,diagnostics,fixtures});
     }
 
     const fixtureId = String(req.query.fixture || '');
