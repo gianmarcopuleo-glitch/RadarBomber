@@ -1,18 +1,30 @@
 // RadarBomber API proxy for API-Football. Keep API_FOOTBALL_KEY in Vercel Environment Variables.
 const BASE = 'https://v3.football.api-sports.io';
 const ALLOWED_LEAGUES = new Set([39, 140, 135, 78, 61, 2, 3, 848, 45, 143, 94, 88]);
+
 async function api(path) {
   const key = (process.env.API_FOOTBALL_KEY || '').trim();
-  if (!key) { const e = new Error('Chiave API non configurata'); e.status = 503; throw e; }
-  const response = await fetch(BASE + path, { headers: { 'x-apisports-key': key }, signal: AbortSignal.timeout(9000) });
+  if (!key) {
+    const e = new Error('Chiave API non configurata');
+    e.status = 503;
+    throw e;
+  }
+  const response = await fetch(BASE + path, {
+    headers: { 'x-apisports-key': key },
+    signal: AbortSignal.timeout(12000)
+  });
   const json = await response.json();
   if (!response.ok || (json.errors && Object.keys(json.errors).length)) {
     const detail = json.errors ? JSON.stringify(json.errors) : 'Errore provider';
-    const e = new Error('API-Football: ' + detail); e.status = response.status || 502; throw e;
+    const e = new Error('API-Football: ' + detail);
+    e.status = response.status || 502;
+    throw e;
   }
   return json.response || [];
 }
+
 const num = v => Number(v || 0);
+
 function indexFor(goals, assists, minutes, apps, kind) {
   if (!apps || !minutes) return 0;
   const per90Goal = goals / Math.max(minutes / 90, 1);
@@ -21,26 +33,63 @@ function indexFor(goals, assists, minutes, apps, kind) {
   const score = 100 * (1 - Math.exp(-base * (kind === 'goal' ? 1.35 : 1.0))) * Math.min(1, apps / 4);
   return Math.max(0, Math.min(99, Math.round(score)));
 }
+
 module.exports = async function handler(req, res) {
   try {
     const now = new Date();
-    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now);
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit'
+    }).formatToParts(now);
     const localDate = `${parts.find(p => p.type === 'year').value}-${parts.find(p => p.type === 'month').value}-${parts.find(p => p.type === 'day').value}`;
     const date = String(req.query.date || localDate);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { res.status(400).json({error:'Data non valida'}); return; }
-    if (!req.query.fixture) {
-      const fixtures = await api('/fixtures?date=' + date + '&timezone=Europe%2FRome');
-      const selected = fixtures.filter(f => ALLOWED_LEAGUES.has(Number(f.league && f.league.id)));
-      res.setHeader('Cache-Control', 's-maxage=120, stale-while-revalidate=120');
-      res.status(200).json({message:'Partite aggiornate alle ' + new Date().toLocaleTimeString('it-IT') + '. Selezione di competizioni principali; dati memorizzati in cache per 5 minuti.', fixtures:selected.map(f=>({id:f.fixture.id,home:f.teams.home.name,away:f.teams.away.name,league:f.league.name,time:f.fixture.date?new Date(f.fixture.date).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Rome'}):'',status:f.fixture.status.short}))});
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      res.status(400).json({ error: 'Data non valida' });
       return;
     }
+
+    if (!req.query.fixture) {
+      const fixtures = await api('/fixtures?date=' + date + '&timezone=Europe%2FRome');
+      const preferred = fixtures.filter(f => ALLOWED_LEAGUES.has(Number(f.league && f.league.id)));
+      // If today's matches use competitions outside our preferred list, show the real fixtures anyway
+      // instead of making the dashboard look broken or empty.
+      const useFallback = preferred.length === 0 && fixtures.length > 0;
+      const visible = (useFallback ? fixtures : preferred).slice(0, 100);
+      const message = fixtures.length === 0
+        ? 'Il provider non segnala partite per il ' + date + '. Prova più tardi o verifica il piano API-Football.'
+        : useFallback
+          ? 'Oggi non risultano partite nelle competizioni preferite: mostro le partite reali disponibili dal provider per il ' + date + '.'
+          : 'Partite reali aggiornate per il ' + date + '. Seleziona “Analizza giocatori” per consultare le statistiche.';
+      res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=60');
+      res.status(200).json({
+        date,
+        message,
+        totalFixturesFromProvider: fixtures.length,
+        usedFallback: useFallback,
+        fixtures: visible.map(f => ({
+          id: f.fixture.id,
+          home: f.teams.home.name,
+          away: f.teams.away.name,
+          league: f.league.name,
+          time: f.fixture.date ? new Date(f.fixture.date).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' }) : '',
+          status: f.fixture.status.short
+        }))
+      });
+      return;
+    }
+
     const fixtureId = Number(req.query.fixture);
-    if (!Number.isInteger(fixtureId) || fixtureId < 1) { res.status(400).json({error:'Partita non valida'}); return; }
+    if (!Number.isInteger(fixtureId) || fixtureId < 1) {
+      res.status(400).json({ error: 'Partita non valida' });
+      return;
+    }
     const fixtures = await api('/fixtures?id=' + fixtureId);
     const fixture = fixtures[0];
-    if (!fixture) { res.status(404).json({error:'Partita non trovata'}); return; }
-    const season = Number(String(fixture.fixture.date || date).slice(0,4)) - (Number(String(fixture.fixture.date || date).slice(5,7)) < 7 ? 1 : 0);
+    if (!fixture) {
+      res.status(404).json({ error: 'Partita non trovata' });
+      return;
+    }
+    const fixtureDate = String(fixture.fixture.date || date);
+    const season = Number(fixtureDate.slice(0, 4)) - (Number(fixtureDate.slice(5, 7)) < 7 ? 1 : 0);
     const [lineups, homePlayers, awayPlayers, injuries] = await Promise.all([
       api('/fixtures/lineups?fixture=' + fixtureId),
       api('/players?team=' + fixture.teams.home.id + '&season=' + season + '&league=' + fixture.league.id + '&page=1'),
@@ -51,21 +100,42 @@ module.exports = async function handler(req, res) {
     const starters = new Set(lineups.flatMap(t => (t.startXI || []).map(p => String(p.player && p.player.id))));
     const injured = new Set(injuries.map(i => String(i.player && i.player.id)));
     const players = [];
-    for (const group of [{team:fixture.teams.home.name,data:homePlayers},{team:fixture.teams.away.name,data:awayPlayers}]) {
+
+    for (const group of [
+      { team: fixture.teams.home.name, data: homePlayers },
+      { team: fixture.teams.away.name, data: awayPlayers }
+    ]) {
       for (const row of group.data) {
-        const p = row.player || {}, st = (row.statistics || [])[0] || {};
+        const p = row.player || {};
+        const st = (row.statistics || [])[0] || {};
         const id = String(p.id || '');
-        const goals = num(st.goals && st.goals.total), assists = num(st.goals && st.goals.assists), minutes = num(st.games && st.games.minutes), apps = num(st.games && st.games.appearences);
+        const goals = num(st.goals && st.goals.total);
+        const assists = num(st.goals && st.goals.assists);
+        const minutes = num(st.games && st.games.minutes);
+        const apps = num(st.games && st.games.appearences);
         if (!p.name || minutes < 90 || (lineupKnown && !starters.has(id)) || injured.has(id)) continue;
-        players.push({name:p.name,team:group.team,position:st.games && st.games.position || '',goals,assists,minutes,starter:starters.has(id),lineupKnown,injured:injured.has(id),goalIndex:indexFor(goals,assists,minutes,apps,'goal'),gaIndex:indexFor(goals,assists,minutes,apps,'ga')});
+        players.push({
+          name: p.name, team: group.team, position: st.games && st.games.position || '',
+          goals, assists, minutes, starter: starters.has(id), lineupKnown,
+          injured: injured.has(id),
+          goalIndex: indexFor(goals, assists, minutes, apps, 'goal'),
+          gaIndex: indexFor(goals, assists, minutes, apps, 'ga')
+        });
       }
     }
-    players.sort((a,b)=>Math.max(b.goalIndex,b.gaIndex)-Math.max(a.goalIndex,a.gaIndex));
-    res.setHeader('Cache-Control', 's-maxage=120, stale-while-revalidate=120');
-    res.status(200).json({message:(lineupKnown?'Formazioni pubblicate dal provider.':'Formazioni non ancora pubblicate: elenco provvisorio.')+' Indici basati su statistiche stagionali; non sono probabilità calibrate.',players:players.slice(0,24)});
+    players.sort((a, b) => Math.max(b.goalIndex, b.gaIndex) - Math.max(a.goalIndex, a.gaIndex));
+    res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=60');
+    res.status(200).json({
+      message: (lineupKnown ? 'Formazioni pubblicate dal provider.' : 'Formazioni non ancora pubblicate: elenco provvisorio.') +
+        ' Indici basati su statistiche stagionali; non sono probabilità calibrate.',
+      players: players.slice(0, 24)
+    });
   } catch (error) {
-    // Never cache missing-key or provider errors: an updated Vercel secret must take effect immediately.
     res.setHeader('Cache-Control', 'no-store, max-age=0');
-    res.status(error.status || 502).json({error:error.status===503?'Chiave API mancante: aggiungi API_FOOTBALL_KEY nelle Environment Variables del progetto Vercel.':(error.message || 'Errore temporaneo del provider')});
+    res.status(error.status || 502).json({
+      error: error.status === 503
+        ? 'Chiave API mancante: aggiungi API_FOOTBALL_KEY nelle Environment Variables del progetto Vercel.'
+        : (error.message || 'Errore temporaneo del provider')
+    });
   }
 };
