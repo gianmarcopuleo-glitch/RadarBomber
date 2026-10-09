@@ -2,7 +2,7 @@
 const BASE = 'https://api.pitchapi.dev/v1';
 // Competizioni richieste dall'utente. I nomi sono normalizzati per tollerare
 // differenze di accenti e punteggiatura restituite dal provider.
-const normalize = s => String(s || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const normalize = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 // Alias comuni restituiti dai cataloghi calcistici. La selezione si basa sul
 // catalogo ufficiale delle leghe, non sui metadati parziali dell'evento giornaliero.
 const LEAGUE_ALIASES = {
