@@ -107,8 +107,8 @@ function comparativeIndices(items){
  }
  return rows;
 }
-function qualifiesGoal(p){return Number(p.goalIndex)>=65&&Number(p.goalProbability)>=18;}
-function qualifiesGA(p){return Number(p.gaIndex)>=65&&Number(p.gaProbability)>=28;}
+function qualifiesGoal(p){return Number(p.goalIndex)>=58&&Number(p.goalProbability)>=15;}
+function qualifiesGA(p){return Number(p.gaIndex)>=58&&Number(p.gaProbability)>=24;}
 function qualifiesAny(p){return qualifiesGoal(p)||qualifiesGA(p);}
 async function scanFixturesForPlayers(fixtures){
  const status=document.getElementById('liveStatus'),out=document.getElementById('liveMatches');
@@ -143,7 +143,7 @@ async function scanFixturesForPlayers(fixtures){
  window.liveFixtureDetails=batch;
  renderLivePlayers();
  const qualified=livePlayersData.filter(qualifiesAny).length;
- status.textContent='Radar aggiornato: '+qualified+' giocatori con indice ≥65/100; '+all.length+' profili recuperati su '+batch.length+' partite analizzate. '+(fixtures.length>batch.length?'Il calendario contiene '+fixtures.length+' partite ammesse; per questa scansione ne sono state analizzate '+batch.length+'. ':'')+(batch.length<30?'Il provider ha restituito solo '+batch.length+' partite ammesse: non vengono inventate partite mancanti. ':'')+(detailFailures.length?'Alcuni dettagli non sono stati recuperati: '+detailFailures.join(' | ')+'.':'')+(weekendScan?'Scansione weekend: massimo 30 partite per giorno.':'');
+ status.textContent='Radar aggiornato: '+qualified+' giocatori con indice ≥58/100; '+all.length+' profili recuperati su '+batch.length+' partite analizzate. '+(fixtures.length>batch.length?'Il calendario contiene '+fixtures.length+' partite ammesse; per questa scansione ne sono state analizzate '+batch.length+'. ':'')+(batch.length<30?'Il provider ha restituito solo '+batch.length+' partite ammesse: non vengono inventate partite mancanti. ':'')+(detailFailures.length?'Alcuni dettagli non sono stati recuperati: '+detailFailures.join(' | ')+'.':'')+(weekendScan?'Scansione weekend: massimo 30 partite per giorno.':'');
 }
 async function loadLivePlayers(fixtureId){
  const status=document.getElementById('liveStatus'),out=document.getElementById('liveMatches');
@@ -194,7 +194,7 @@ function renderLivePlayers(){
  }
  const backButton=isBatch?'<button onclick="showLiveFixtures()">Vedi palinsesto partite</button>':'<button onclick="showLiveFixtures()">← Torna al radar generale</button>';
  if(!list.length){
-  const marketLabel=liveSort==='goal'?'marcatore (indice ≥65 e P(gol) ≥18%)':liveSort==='ga'?'gol/assist (indice ≥65 e P(gol o assist) ≥28%)':'uno dei due mercati (indice ≥65 e probabilità minima rispettata)';
+  const marketLabel=liveSort==='goal'?'marcatore (indice ≥58 e P(gol) ≥18%)':liveSort==='ga'?'gol/assist (indice ≥58 e P(gol o assist) ≥28%)':'uno dei due mercati (indice ≥58 e probabilità minima rispettata)';
   out.innerHTML=backButton+'<div class="empty">Nessun giocatore supera i criteri di giocabilità per '+marketLabel+'. I profili sotto soglia vengono nascosti, non promossi artificialmente. Prova un’altra partita o aggiorna quando sono disponibili dati più completi.</div>';
   return;
  }
