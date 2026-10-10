@@ -260,22 +260,28 @@ function median(values) {
   return Number((v.length%2?v[m]:(v[m-1]+v[m])/2).toFixed(2));
 }
 function getEventPrices(event) {
-  const home=[],away=[];
+  const homeQuotes=[],awayQuotes=[];
   for(const book of event.bookmakers||[]) {
     const market=(book.markets||[]).find(m=>m.key==='h2h');
     if(!market)continue;
     const h=(market.outcomes||[]).find(o=>sameTeam(o.name,event.home_team));
     const a=(market.outcomes||[]).find(o=>sameTeam(o.name,event.away_team));
-    if(h)home.push(Number(h.price));
-    if(a)away.push(Number(a.price));
+    if(h&&Number(h.price)>1)homeQuotes.push({price:Number(h.price),book:book.title||book.key||'Bookmaker'});
+    if(a&&Number(a.price)>1)awayQuotes.push({price:Number(a.price),book:book.title||book.key||'Bookmaker'});
   }
-  const homeOdds=median(home),awayOdds=median(away);
+  const homeOdds=median(homeQuotes.map(x=>x.price)),awayOdds=median(awayQuotes.map(x=>x.price));
+  const bestHome=homeQuotes.slice().sort((a,b)=>b.price-a.price)[0]||null;
+  const bestAway=awayQuotes.slice().sort((a,b)=>b.price-a.price)[0]||null;
   let favorite=null;
   if(homeOdds!=null && awayOdds!=null) {
     if(homeOdds<awayOdds && homeOdds<=2.00)favorite='home';
     else if(awayOdds<homeOdds && awayOdds<=2.00)favorite='away';
   }
-  return {homeOdds,awayOdds,favorite,bookmakersCount:Math.min(home.length,away.length)};
+  return {
+    homeOdds,awayOdds,favorite,bookmakersCount:Math.min(homeQuotes.length,awayQuotes.length),
+    bestHomeOdds:bestHome?.price??null,bestHomeBook:bestHome?.book??null,
+    bestAwayOdds:bestAway?.price??null,bestAwayBook:bestAway?.book??null
+  };
 }
 function matchOddsForFixture(fixture, events) {
   const homeName=fixture.home_team&&fixture.home_team.name||'';
@@ -474,7 +480,7 @@ module.exports = async function handler(req, res) {
           homeOdds:odds.homeOdds,awayOdds:odds.awayOdds,
           favorite,favoriteTeam:favorite==='home'?(m.home_team&&m.home_team.name||''):(m.away_team&&m.away_team.name||''),
           oddsFilter:favorite==='home'?'Favorita casa ≤ 1,65':'Favorita trasferta ≤ 1,55',
-          bookmakersCount:odds.bookmakersCount||0,oddsSource:odds.oddsSource||'The Odds API'
+          bookmakersCount:odds.bookmakersCount||0,bestHomeOdds:odds.bestHomeOdds??null,bestHomeBook:odds.bestHomeBook||'',bestAwayOdds:odds.bestAwayOdds??null,bestAwayBook:odds.bestAwayBook||'',oddsSource:odds.oddsSource||'The Odds API'
         };
       }).filter(Boolean).slice(0,60);
       const leagueCounts={};
