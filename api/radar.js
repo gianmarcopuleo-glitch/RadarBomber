@@ -141,7 +141,7 @@ const poissonPercent = rate => Math.round(clamp((1 - Math.exp(-Math.max(0, rate)
 const contextMultiplier = (attack, defense) => {
   const a = Number.isFinite(attack) && attack > 0 ? attack / 1.45 : 1;
   const d = Number.isFinite(defense) && defense > 0 ? defense / 1.35 : 1;
-  return Math.max(0.72, Math.min(1.28, Math.sqrt(a * d)));
+  return Math.max(0.92, Math.min(1.08, Math.sqrt(a * d)));
 };
 const rateScore = (value, ceiling) => clamp((Math.max(0, value || 0) / ceiling) * 100);
 // Accettiamo il ruolo di rigorista soltanto quando il provider espone un campo esplicito.
@@ -1172,17 +1172,17 @@ module.exports = async function handler(req, res) {
         const contextFactor=contextMultiplier(attackMetric,defenseMetric);
         // Bonus modéré des cotes 1X2 : le favori à domicile reçoit un poids supplémentaire,
         // sans transformer une cote d'équipe en probabilité individuelle de marquer.
-        const oddsFactor = !oddsAvailable ? 1 : teamOdds<=1.50 ? (p.teamId===homeId?1.12:1.06) : teamOdds<=1.75 ? (p.teamId===homeId?1.10:1.05) : teamOdds<=2.00 ? (p.teamId===homeId?1.08:1.04) : teamOdds<=2.50 ? 1.04 : 1.00;
-        const venueFactor=p.teamId===homeId?1.14:1.04;
+        const oddsFactor = !oddsAvailable ? 1 : teamOdds<=1.50 ? (p.teamId===homeId?1.06:1.03) : teamOdds<=1.75 ? (p.teamId===homeId?1.05:1.03) : teamOdds<=2.00 ? (p.teamId===homeId?1.04:1.02) : teamOdds<=2.50 ? 1.02 : 1.00;
+        const venueFactor=p.teamId===homeId?1.05:1.00;
         const h2hGoalRate=h2hStats.appearances?h2hStats.goalMatches/h2hStats.appearances:0;
         const h2hGaRate=h2hStats.appearances?h2hStats.gaMatches/h2hStats.appearances:0;
-        const h2hGoalFactor=1+Math.min(0.12,h2hGoalRate*0.12);
-        const h2hGaFactor=1+Math.min(0.10,h2hGaRate*0.10);
+        const h2hGoalFactor=1+Math.min(0.05,h2hGoalRate*0.05);
+        const h2hGaFactor=1+Math.min(0.04,h2hGaRate*0.04);
         // Un rigorista designato riceve un bonus moderato, solo se il provider lo dichiara esplicitamente.
-        const penaltyTakerFactor=penaltyTaker===true?1.12:1.00;
-        const penaltyGaFactor=penaltyTaker===true?1.05:1.00;
-        const combinedGoalFactor=Math.min(1.35,oddsFactor*venueFactor*h2hGoalFactor*penaltyTakerFactor);
-        const combinedGaFactor=Math.min(1.30,oddsFactor*venueFactor*h2hGaFactor*penaltyGaFactor);
+        const penaltyTakerFactor=penaltyTaker===true?1.08:1.00;
+        const penaltyGaFactor=penaltyTaker===true?1.03:1.00;
+        const combinedGoalFactor=Math.min(1.20,oddsFactor*venueFactor*h2hGoalFactor*penaltyTakerFactor);
+        const combinedGaFactor=Math.min(1.15,oddsFactor*venueFactor*h2hGaFactor*penaltyGaFactor);
         const matchOddsContext = {available:oddsAvailable,homeOdds,awayOdds,teamOdds:teamOdds??null,favorite:matchOdds?.favorite||null,bookmakersCount:matchOdds?.bookmakersCount||0,bestHomeOdds:matchOdds?.bestHomeOdds??null,bestHomeBook:matchOdds?.bestHomeBook||'',bestAwayOdds:matchOdds?.bestAwayOdds??null,bestAwayBook:matchOdds?.bestAwayBook||'',score:matchOddsScore,factor:oddsFactor};
         const headToHeadContext = {matches:h2hMatches.length,playerMatches:h2hStats.appearances,goalMatches:h2hStats.goalMatches,gaMatches:h2hStats.gaMatches,goals:h2hStats.goals,assists:h2hStats.assists,goalRate:Number(h2hGoalRate.toFixed(2)),gaRate:Number(h2hGaRate.toFixed(2)),goalFactor:h2hGoalFactor,gaFactor:h2hGaFactor};
         const penaltyContext={designated:penaltyTaker,factor:penaltyTakerFactor,gaFactor:penaltyGaFactor,source:penaltyTaker===null?'dato non disponibile':'campo esplicito del provider'};
@@ -1231,7 +1231,7 @@ module.exports = async function handler(req, res) {
     if (!players.length && !lineupAvailable) diagnostics.push('Nessun profilo individuale recuperato e formazione attuale non disponibile: il provider non ha fornito una base verificabile per questa partita.');
     if (players.some(p=>p.appearances===0) && lineupAvailable) diagnostics.push('Alcuni titolari sono mostrati dalla formazione ma non hanno statistiche recenti: restano monitorabili e non sono idonei a proposte giocabili.');
     diagnostics.push('Precedenti diretti: '+h2hMatches.length+' partite trovate, '+h2hPlayerResults.filter(r=>(r.players||[]).length>0).length+' con statistiche individuali recuperabili.');
-    diagnostics.push('Copertura statistica stagione corrente (campionato): '+playerResults.filter(r=>(r.players||[]).length>0).length+'/'+playerResults.length+' partite con statistiche giocatori e '+playerResults.filter(r=>(r.shots||[]).length>0).length+'/'+playerResults.length+' con tiri/xG. Fonte: PitchAPI. I gol e gli assist individuali sono aggregati dalle partite concluse della stagione corrente nel campionato analizzato; i tiri/xG e i minuti sono ricavati dalle stesse gare. Il modello dà priorità assoluta al rendimento realizzativo individuale; attacco squadra, difesa avversaria, sede e altri contesti sono correttivi marginali. Le probabilità sono stime, non valori calibrati. I titolari senza statistiche individuali di stagione restano candidati da monitorare e non sono proposte giocabili. I minuti mancanti non vengono inventati.');
+    diagnostics.push('Copertura statistica stagione corrente (campionato): '+playerResults.filter(r=>(r.players||[]).length>0).length+'/'+playerResults.length+' partite con statistiche giocatori e '+playerResults.filter(r=>(r.shots||[]).length>0).length+'/'+playerResults.length+' con tiri/xG. Fonte: PitchAPI. I gol e gli assist individuali sono aggregati dalle partite concluse della stagione corrente nel campionato analizzato; i tiri/xG e i minuti sono ricavati dalle stesse gare. Il modello dà priorità assoluta al rendimento realizzativo individuale; attacco squadra, difesa avversaria, sede, quote 1X2 e precedenti sono correttivi marginali, con impatto limitato anche sulle probabilità. Le probabilità sono stime, non valori calibrati. I titolari senza statistiche individuali di stagione restano candidati da monitorare e non sono proposte giocabili. I minuti mancanti non vengono inventati.');
     const message = players.length
       ? 'Analisi dei giocatori di entrambe le squadre. Quote 1X2 '+(oddsAvailable?'disponibili come fattore informativo':'non disponibili; analisi comunque eseguita senza filtri quote')+'. '+(lineupConfirmed
           ? 'Formazione ufficiale pubblicata: sono mostrati i titolari ufficiali.'
