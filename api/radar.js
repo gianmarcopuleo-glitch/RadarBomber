@@ -865,7 +865,7 @@ module.exports = async function handler(req, res) {
         const penaltyGaFactor=penaltyTaker===true?1.05:1.00;
         const combinedGoalFactor=Math.min(1.35,oddsFactor*venueFactor*h2hGoalFactor*penaltyTakerFactor);
         const combinedGaFactor=Math.min(1.30,oddsFactor*venueFactor*h2hGaFactor*penaltyGaFactor);
-        const matchOddsContext = {homeOdds,awayOdds,teamOdds,favorite:matchOdds?.favorite||null,bookmakersCount:matchOdds?.bookmakersCount||0,score:matchOddsScore,factor:oddsFactor};
+        const matchOddsContext = {homeOdds,awayOdds,teamOdds,favorite:matchOdds?.favorite||null,bookmakersCount:matchOdds?.bookmakersCount||0,bestHomeOdds:matchOdds?.bestHomeOdds??null,bestHomeBook:matchOdds?.bestHomeBook||'',bestAwayOdds:matchOdds?.bestAwayOdds??null,bestAwayBook:matchOdds?.bestAwayBook||'',score:matchOddsScore,factor:oddsFactor};
         const headToHeadContext = {matches:h2hMatches.length,playerMatches:h2hStats.appearances,goalMatches:h2hStats.goalMatches,gaMatches:h2hStats.gaMatches,goals:h2hStats.goals,assists:h2hStats.assists,goalRate:Number(h2hGoalRate.toFixed(2)),gaRate:Number(h2hGaRate.toFixed(2)),goalFactor:h2hGoalFactor,gaFactor:h2hGaFactor};
         const penaltyContext={designated:penaltyTaker,factor:penaltyTakerFactor,gaFactor:penaltyGaFactor,source:penaltyTaker===null?'dato non disponibile':'campo esplicito del provider'};
         const expectedMinutes=Math.max(0,Math.min(90,
