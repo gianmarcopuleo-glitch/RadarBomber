@@ -194,7 +194,7 @@ function renderLivePlayers(){
  }
  const backButton=isBatch?'<button onclick="showLiveFixtures()">Vedi palinsesto partite</button>':'<button onclick="showLiveFixtures()">← Torna al radar generale</button>';
  if(!list.length){
-  const marketLabel=liveSort==='goal'?'marcatore (indice ≥58 e P(gol) ≥18%)':liveSort==='ga'?'gol/assist (indice ≥58 e P(gol o assist) ≥28%)':'uno dei due mercati (indice ≥58 e probabilità minima rispettata)';
+  const marketLabel=liveSort==='goal'?'marcatore (indice ≥58 e P(gol) ≥15%)':liveSort==='ga'?'gol/assist (indice ≥58 e P(gol o assist) ≥24%)':'uno dei due mercati (indice ≥58 e probabilità minima rispettata)';
   out.innerHTML=backButton+'<div class="empty">Nessun giocatore supera i criteri di giocabilità per '+marketLabel+'. I profili sotto soglia vengono nascosti, non promossi artificialmente. Prova un’altra partita o aggiorna quando sono disponibili dati più completi.</div>';
   return;
  }
