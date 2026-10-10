@@ -173,7 +173,7 @@ function renderLivePlayers(){
  if(!out)return;
  // Mostra tutti i candidati di entrambe le squadre. La soglia applicata all'elenco
  // nascondeva quasi tutti i giocatori quando anche uno solo superava i limiti.
- const ranked=livePlayersData.slice().sort((a,b)=>liveSort==='ga'?b.gaProbability-a.gaProbability:liveSort==='goal'?b.goalProbability-a.goalProbability:Math.max(b.goalProbability,b.gaProbability)-Math.max(a.goalProbability,a.gaProbability));
+ const ranked=livePlayersData.slice().sort((a,b)=>liveSort==='ga'?Number(b.gaIndex||0)-Number(a.gaIndex||0):liveSort==='goal'?Number(b.goalIndex||0)-Number(a.goalIndex||0):Math.max(Number(b.goalIndex||0),Number(b.gaIndex||0))-Math.max(Number(a.goalIndex||0),Number(a.gaIndex||0)));
  const isBatch=liveFixtureId===null;
  let list=ranked;
  if(isBatch){
