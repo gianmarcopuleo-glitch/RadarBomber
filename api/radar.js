@@ -1172,7 +1172,10 @@ module.exports = async function handler(req, res) {
           20+Math.min(5,appearances)*8+(lineupAvailable&&isCurrentStarter?(lineupConfirmed?25:10):0)+
           (p.minutes>0?10:0)+(shotDataAvailable||p.statsXg>0?17:0)+(shotsOnTarget>0?8:0)
         ));
-        const eligibleForBet=Boolean((lineupConfirmed||lineupAvailable) && (!lineupAvailable||isCurrentStarter) && appearances>=2 && confidenceScore>=55 && (shotDataAvailable||p.statsXg>0||p.statsShots>0));
+        const hasRecentEvidence=shotDataAvailable||p.statsXg>0||p.statsShots>0||p.goals>0||p.assists>0;
+        // Parametri più permissivi, ma mai senza formazione e riscontri individuali:
+        // basta una presenza con evidenza statistica, purché il giocatore sia titolare.
+        const eligibleForBet=Boolean(lineupAvailable && isCurrentStarter && appearances>=1 && confidenceScore>=40 && hasRecentEvidence);
         return {...p,
           name:officialSource&&officialSource.name||p.name,
           team:p.teamId===homeId?home.name:away.name,
@@ -1202,7 +1205,7 @@ module.exports = async function handler(req, res) {
     if (!players.length && !lineupAvailable) diagnostics.push('Nessun profilo individuale recuperato e formazione attuale non disponibile: il provider non ha fornito una base verificabile per questa partita.');
     if (players.some(p=>p.appearances===0) && lineupAvailable) diagnostics.push('Alcuni titolari sono mostrati dalla formazione ma non hanno statistiche recenti: restano monitorabili e non sono idonei a proposte giocabili.');
     diagnostics.push('Precedenti diretti: '+h2hMatches.length+' partite trovate, '+h2hPlayerResults.filter(r=>(r.players||[]).length>0).length+' con statistiche individuali recuperabili.');
-    diagnostics.push('Copertura storico individuale: '+playerResults.filter(r=>(r.players||[]).length>0).length+'/'+playerResults.length+' partite con statistiche giocatori e '+playerResults.filter(r=>(r.shots||[]).length>0).length+'/'+playerResults.length+' con tiri/xG. Fonte: PitchAPI. Il modello combina rendimento recente, tiri/xG, attacco squadra, difesa avversaria, quote 1X2, vantaggio casa più marcato (coefficiente 1,14 contro 1,04 in trasferta) e precedenti diretti individuali. I bonus H2H sono limitati e applicati solo se i dati del giocatore sono disponibili; non sono probabilità calibrate. Quote 1X2 non sono quote del mercato marcatore. I profili senza statistiche individuali recenti vengono esclusi. I valori mancanti non vengono inventati; minuti stimati solo se il provider non li riporta.');
+    diagnostics.push('Copertura storico individuale: '+playerResults.filter(r=>(r.players||[]).length>0).length+'/'+playerResults.length+' partite con statistiche giocatori e '+playerResults.filter(r=>(r.shots||[]).length>0).length+'/'+playerResults.length+' con tiri/xG. Fonte: PitchAPI. Il modello combina rendimento recente, tiri/xG, attacco squadra, difesa avversaria, quote 1X2, vantaggio casa più marcato (coefficiente 1,14 contro 1,04 in trasferta) e precedenti diretti individuali. I bonus H2H sono limitati e applicati solo se i dati del giocatore sono disponibili; non sono probabilità calibrate. Quote 1X2 non sono quote del mercato marcatore. I titolari senza statistiche individuali recenti restano visibili come candidati da monitorare ma non sono idonei a proposte giocabili. I requisiti per i titolari con riscontri sono stati allentati a una presenza con evidenza statistica. I valori mancanti non vengono inventati; minuti stimati solo se il provider non li riporta.');
     const message = players.length
       ? 'Analisi dei giocatori di entrambe le squadre. Quote 1X2 '+(oddsAvailable?'disponibili come fattore informativo':'non disponibili; analisi comunque eseguita senza filtri quote')+'. '+(lineupConfirmed
           ? 'Formazione ufficiale pubblicata: sono mostrati i titolari ufficiali.'
