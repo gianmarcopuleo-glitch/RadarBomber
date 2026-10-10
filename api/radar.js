@@ -1058,7 +1058,7 @@ module.exports = async function handler(req, res) {
       return xt.length>0&&yt.length>0&&xt[xt.length-1]===yt[yt.length-1]&&xt[xt.length-1].length>=4;
     };
     const players = [...playersByKey.values()]
-      .filter(p=>{const lineupPosition=lineupPlayersById.get(String(p.id))?.positionId;const isGoalkeeper=p.position==='Portiere'||positionName(p.positionId)==='Portiere'||positionName(lineupPosition)==='Portiere';const hasRecentData=p.appearances>0||p.shots>0||p.statsShots>0||p.xg>0||p.statsXg>0||p.goals>0||p.assists>0;const inCurrentLineup=lineupPlayersById.has(String(p.id))||[...lineupPlayersById.values()].some(o=>o.teamId===p.teamId&&samePlayerName(o.name,p.name));return (p.teamId===homeId||p.teamId===awayId)&&!isGoalkeeper&&hasRecentData&&(!lineupAvailable||inCurrentLineup);})
+      .filter(p=>{const lineupPosition=lineupPlayersById.get(String(p.id))?.positionId;const isGoalkeeper=p.position==='Portiere'||positionName(p.positionId)==='Portiere'||positionName(lineupPosition)==='Portiere';const hasRecentData=p.appearances>0||p.shots>0||p.statsShots>0||p.xg>0||p.statsXg>0||p.goals>0||p.assists>0;const inCurrentLineup=lineupPlayersById.has(String(p.id))||[...lineupPlayersById.values()].some(o=>o.teamId===p.teamId&&samePlayerName(o.name,p.name));const hasTrustedSource=hasRecentData||(lineupAvailable&&inCurrentLineup);return (p.teamId===homeId||p.teamId===awayId)&&!isGoalkeeper&&hasTrustedSource&&(!lineupAvailable||inCurrentLineup);})
       .map(p=>{
         const officialSource=lineupPlayersById.get(String(p.id)) || [...lineupPlayersById.values()].find(o=>o.teamId===p.teamId&&samePlayerName(o.name,p.name));
         const isCurrentStarter=Boolean(officialSource);
@@ -1067,12 +1067,15 @@ module.exports = async function handler(req, res) {
         const shotsOnTarget=shotDataAvailable?p.shotsOnTarget:p.statsShotsOnTarget;
         const xg=shotDataAvailable?p.xg:p.statsXg;
         const minutes=p.minutes>0?p.minutes:(p.appearances>0?p.appearances*70:0);
-        const goalsPer90=p.goals/minutes*90;
-        const gaPer90=(p.goals+p.assists)/minutes*90;
-        const assistsPer90=p.assists/minutes*90;
-        const xgPer90=xg/minutes*90;
-        const shotsPer90=shots/minutes*90;
-        const onTargetPer90=shotsOnTarget/minutes*90;
+        // Lineup-only profiles have no minutes yet; use a safe denominator and keep
+        // their betting eligibility disabled until real recent stats are available.
+        const rateMinutes=Math.max(1,minutes);
+        const goalsPer90=p.goals/rateMinutes*90;
+        const gaPer90=(p.goals+p.assists)/rateMinutes*90;
+        const assistsPer90=p.assists/rateMinutes*90;
+        const xgPer90=xg/rateMinutes*90;
+        const shotsPer90=shots/rateMinutes*90;
+        const onTargetPer90=shotsOnTarget/rateMinutes*90;
         const conversion=shots>0?p.goals/shots:0;
         const h2hStats=h2hByPlayerId.get(p.teamId+':'+String(p.id)) ||
           h2hByPlayerName.get(p.teamId+':'+normalize(p.name)) ||
@@ -1196,6 +1199,8 @@ module.exports = async function handler(req, res) {
     if((process.env.UKODDS_API_KEY||'').trim()) diagnostics.push(ukOddsData ? ('UK Odds API: '+(ukOddsData.playerMarketsAvailable?'mercati avanzati consultati':'solo mercati core disponibili; i mercati giocatore richiedono piano Pro o superiore')+'.') : 'UK Odds API configurata ma quote non agganciate a questa partita.');
     if (homeRecent.length<5 || awayRecent.length<5) diagnostics.push('Campione recente incompleto: ultime gare trovate casa='+homeRecent.length+', ospite='+awayRecent.length+'.');
     if (!uniqueMatches.length) diagnostics.push('Non sono state trovate partite concluse recenti per entrambe le squadre nei campionati coperti.');
+    if (!players.length && !lineupAvailable) diagnostics.push('Nessun profilo individuale recuperato e formazione attuale non disponibile: il provider non ha fornito una base verificabile per questa partita.');
+    if (players.some(p=>p.appearances===0) && lineupAvailable) diagnostics.push('Alcuni titolari sono mostrati dalla formazione ma non hanno statistiche recenti: restano monitorabili e non sono idonei a proposte giocabili.');
     diagnostics.push('Precedenti diretti: '+h2hMatches.length+' partite trovate, '+h2hPlayerResults.filter(r=>(r.players||[]).length>0).length+' con statistiche individuali recuperabili.');
     diagnostics.push('Copertura storico individuale: '+playerResults.filter(r=>(r.players||[]).length>0).length+'/'+playerResults.length+' partite con statistiche giocatori e '+playerResults.filter(r=>(r.shots||[]).length>0).length+'/'+playerResults.length+' con tiri/xG. Fonte: PitchAPI. Il modello combina rendimento recente, tiri/xG, attacco squadra, difesa avversaria, quote 1X2, vantaggio casa più marcato (coefficiente 1,14 contro 1,04 in trasferta) e precedenti diretti individuali. I bonus H2H sono limitati e applicati solo se i dati del giocatore sono disponibili; non sono probabilità calibrate. Quote 1X2 non sono quote del mercato marcatore. I profili senza statistiche individuali recenti vengono esclusi. I valori mancanti non vengono inventati; minuti stimati solo se il provider non li riporta.');
     const message = players.length
