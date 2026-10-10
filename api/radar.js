@@ -1120,16 +1120,18 @@ module.exports = async function handler(req, res) {
         const penaltyTaker=designatedPenaltyTaker(p);
         const penaltyTakerScore=penaltyTaker===true?100:penaltyTaker===false?0:50;
         const goalIndex=weighted([
-          [goalComponents.recentGoals,14],[goalComponents.expectedGoals,18],[goalComponents.shotVolume,13],
-          [goalComponents.shotsOnTarget,8],[goalComponents.finishing,5],[goalComponents.teamAttack,6],
-          [goalComponents.opponentDefense,6],[goalComponents.homeAdvantage,8],[goalComponents.minutes,3],
-          [matchOddsScore,5],[h2hGoalScore,10],[penaltyTakerScore,4]
+          // Priorità ai segnali individuali verificabili: il contesto aiuta, ma non decide da solo.
+          [goalComponents.recentGoals,15],[goalComponents.expectedGoals,22],[goalComponents.shotVolume,14],
+          [goalComponents.shotsOnTarget,10],[goalComponents.finishing,7],[goalComponents.teamAttack,7],
+          [goalComponents.opponentDefense,6],[goalComponents.homeAdvantage,3],[goalComponents.minutes,5],
+          [matchOddsScore,4],[h2hGoalScore,5],[penaltyTakerScore,2]
         ]);
         const gaIndex=weighted([
-          [gaComponents.goalContributions,13],[gaComponents.expectedGoals,16],[gaComponents.shotVolume,11],
-          [gaComponents.shotsOnTarget,8],[gaComponents.assists,12],[gaComponents.chanceCreation,7],
-          [gaComponents.teamAttack,5],[gaComponents.opponentDefense,6],[gaComponents.homeAdvantage,8],[gaComponents.minutes,2],
-          [matchOddsScore,4],[h2hGaScore,8]
+          // Gol/assist: contributi, xG, tiri, assist e creazione occasioni sono il nucleo del punteggio.
+          [gaComponents.goalContributions,18],[gaComponents.expectedGoals,20],[gaComponents.shotVolume,12],
+          [gaComponents.shotsOnTarget,8],[gaComponents.assists,15],[gaComponents.chanceCreation,10],
+          [gaComponents.teamAttack,5],[gaComponents.opponentDefense,4],[gaComponents.homeAdvantage,2],[gaComponents.minutes,2],
+          [matchOddsScore,2],[h2hGaScore,2]
         ]);
         // Probabilità evento: conversione Poisson da tassi individuali regolarizzati.
         // La regolarizzazione riduce l'effetto di campioni piccoli; non sostituisce una calibrazione storica.
