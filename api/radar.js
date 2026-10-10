@@ -606,7 +606,7 @@ function rundownMatchOdds(event,fixture) {
   const bh=hq.slice().sort((a,b)=>b.price-a.price)[0],ba=aq.slice().sort((a,b)=>b.price-a.price)[0];
   const homeOdds=avg(hq),awayOdds=avg(aq);
   if(homeOdds==null||awayOdds==null)return null;
-  return {homeOdds,awayOdds,favorite:homeOdds<awayOdds?'home':homeOdds<awayOdds?'away':null,bookmakersCount:Math.min(hq.length,aq.length),bestHomeOdds:bh?.price??null,bestHomeBook:bh?.book||'',bestAwayOdds:ba?.price??null,bestAwayBook:ba?.book||'',oddsSource:'TheRundown'};
+  return {homeOdds,awayOdds,favorite:homeOdds<awayOdds?'home':awayOdds<homeOdds?'away':null,bookmakersCount:Math.min(hq.length,aq.length),bestHomeOdds:bh?.price??null,bestHomeBook:bh?.book||'',bestAwayOdds:ba?.price??null,bestAwayBook:ba?.book||'',oddsSource:'TheRundown'};
 }
 
 async function pitch(path) {
