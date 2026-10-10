@@ -1089,16 +1089,24 @@ module.exports = async function handler(req, res) {
         const ownForm=teamForm.get(p.teamId)||{games:0,goalsFor:0,goalsAgainst:0,xgFor:0,xgAgainst:0,xgMatches:0};
         const opponentId=p.teamId===homeId?awayId:homeId;
         const oppForm=teamForm.get(opponentId)||{games:0,goalsFor:0,goalsAgainst:0,xgFor:0,xgAgainst:0,xgMatches:0};
-        const attackMetric=ownForm.xgMatches?ownForm.xgFor/ownForm.xgMatches:ownForm.goalsFor/Math.max(1,ownForm.games);
-        const defenseMetric=oppForm.xgMatches?oppForm.xgAgainst/Math.max(1,oppForm.games):oppForm.goalsAgainst/Math.max(1,oppForm.games);
+        // Combina qualità delle occasioni (xG) e rendimento reale della squadra.
+        // Il denominatore usa solo le gare con dati xG disponibili, evitando di diluire il dato.
+        const attackMetric=ownForm.xgMatches
+          ? 0.60*(ownForm.xgFor/ownForm.xgMatches)+0.40*(ownForm.goalsFor/Math.max(1,ownForm.games))
+          : ownForm.goalsFor/Math.max(1,ownForm.games);
+        const defenseMetric=oppForm.xgMatches
+          ? 0.60*(oppForm.xgAgainst/oppForm.xgMatches)+0.40*(oppForm.goalsAgainst/Math.max(1,oppForm.games))
+          : oppForm.goalsAgainst/Math.max(1,oppForm.games);
+        const shotAccuracy=shots>0?shotsOnTarget/shots:0;
         const goalComponents={
           recentGoals:rateScore(goalsPer90,0.75),
-          expectedGoals:rateScore(xgPer90,0.75),
-          shotVolume:rateScore(shotsPer90,5),
-          shotsOnTarget:rateScore(onTargetPer90,2.5),
-          finishing:rateScore(conversion,0.35),
-          teamAttack:rateScore(attackMetric,2.5),
-          opponentDefense:rateScore(defenseMetric,2.2),
+          expectedGoals:rateScore(xgPer90,0.75), // qualità delle occasioni individuali
+          shotVolume:rateScore(shotsPer90,5), // volume totale di tiro
+          shotsOnTarget:rateScore(onTargetPer90,2.5), // tiri nello specchio
+          shotAccuracy:rateScore(shotAccuracy,0.65), // precisione dei tiri
+          finishing:rateScore(conversion,0.35), // capacità realizzativa
+          teamAttack:rateScore(attackMetric,2.5), // squadra produttiva: gol + xG
+          opponentDefense:rateScore(defenseMetric,2.2), // avversaria vulnerabile: gol + xGA concessi
           homeAdvantage:p.teamId===homeId?100:35,
           minutes:rateScore(minutes/Math.max(1,p.appearances),90)
         };
@@ -1107,6 +1115,7 @@ module.exports = async function handler(req, res) {
           expectedGoals:rateScore(xgPer90,0.75),
           shotVolume:rateScore(shotsPer90,5),
           shotsOnTarget:rateScore(onTargetPer90,2.5),
+          shotAccuracy:rateScore(shotAccuracy,0.65),
           assists:rateScore(assistsPer90,0.4),
           chanceCreation:rateScore(p.keyPasses/Math.max(1,p.appearances),2.5),
           teamAttack:rateScore(attackMetric,2.5),
@@ -1120,18 +1129,18 @@ module.exports = async function handler(req, res) {
         const penaltyTaker=designatedPenaltyTaker(p);
         const penaltyTakerScore=penaltyTaker===true?100:penaltyTaker===false?0:50;
         const goalIndex=weighted([
-          // Priorità ai segnali individuali verificabili: il contesto aiuta, ma non decide da solo.
-          [goalComponents.recentGoals,8],[goalComponents.expectedGoals,18],[goalComponents.shotVolume,15],
-          [goalComponents.shotsOnTarget,12],[goalComponents.finishing,8],[goalComponents.teamAttack,10],
-          [goalComponents.opponentDefense,12],[goalComponents.homeAdvantage,5],[goalComponents.minutes,7],
-          [matchOddsScore,2],[h2hGoalScore,2],[penaltyTakerScore,1]
+          // Pesi su 100: rendimento individuale e segnali di tiro prevalgono; il contesto di gara resta rilevante.
+          [goalComponents.recentGoals,9],[goalComponents.expectedGoals,18],[goalComponents.shotVolume,12],
+          [goalComponents.shotsOnTarget,11],[goalComponents.shotAccuracy,5],[goalComponents.finishing,5],
+          [goalComponents.teamAttack,10],[goalComponents.opponentDefense,12],[goalComponents.homeAdvantage,5],
+          [goalComponents.minutes,6],[matchOddsScore,2],[h2hGoalScore,2],[penaltyTakerScore,3]
         ]);
         const gaIndex=weighted([
-          // Gol/assist: contributi, xG, tiri, assist e creazione occasioni sono il nucleo del punteggio.
-          [gaComponents.goalContributions,12],[gaComponents.expectedGoals,15],[gaComponents.shotVolume,12],
-          [gaComponents.shotsOnTarget,10],[gaComponents.assists,13],[gaComponents.chanceCreation,9],
-          [gaComponents.teamAttack,8],[gaComponents.opponentDefense,10],[gaComponents.homeAdvantage,3],[gaComponents.minutes,5],
-          [matchOddsScore,1],[h2hGaScore,2]
+          // Gol/assist: rendimento complessivo, assist e occasioni create contano quanto la qualità dei tiri.
+          [gaComponents.goalContributions,12],[gaComponents.expectedGoals,15],[gaComponents.shotVolume,9],
+          [gaComponents.shotsOnTarget,8],[gaComponents.shotAccuracy,4],[gaComponents.assists,14],
+          [gaComponents.chanceCreation,13],[gaComponents.teamAttack,8],[gaComponents.opponentDefense,10],
+          [gaComponents.homeAdvantage,3],[gaComponents.minutes,2],[matchOddsScore,1],[h2hGaScore,1]
         ]);
         // Probabilità evento: conversione Poisson da tassi individuali regolarizzati.
         // La regolarizzazione riduce l'effetto di campioni piccoli; non sostituisce una calibrazione storica.
@@ -1188,7 +1197,7 @@ module.exports = async function handler(req, res) {
           shots:Number(shots.toFixed(1)),shotsOnTarget:Number(shotsOnTarget.toFixed(1)),xg:Number(xg.toFixed(2)),
           minutes:Number(minutes.toFixed(0)),minutesEstimated:!(p.minutes>0),
           teamXgPerMatch:Number(attackMetric.toFixed(2)),opponentXgaPerMatch:Number(defenseMetric.toFixed(2)),
-          goalComponents,gaComponents,goalIndex,gaIndex,matchOddsContext,headToHeadContext,venueFactor,penaltyContext,
+          goalComponents,gaComponents,goalIndex,gaIndex,matchOddsContext,headToHeadContext,venueFactor,penaltyContext,shotAccuracy:Number(shotAccuracy.toFixed(3)),
           goalProbability:adjustedGoalProbability,gaProbability:adjustedGaProbability,confidenceScore,eligibleForBet,expectedMinutes,
           probabilityModel:'poisson-shrunk-v4-expanded-candidates'
         };
@@ -1217,7 +1226,7 @@ module.exports = async function handler(req, res) {
       : 'Nessun giocatore con gol o assist rilevati nelle ultime partite concluse disponibili per questa gara. ' + diagnostics.join(' | ');
     // L'analisi non va memorizzata a lungo: rose e formazioni possono cambiare.
     res.setHeader('Cache-Control','no-store, max-age=0');
-    return res.status(200).json({message,diagnostics,oddsProviders:{theOddsApi:Boolean((process.env.ODDS_API_KEY||'').trim()),ukOddsApi:Boolean((process.env.UKODDS_API_KEY||'').trim()),sportsGameOdds:Boolean((process.env.SPORTSGAMEODDS_API_KEY||'').trim()),theRundown:Boolean((process.env.THERUNDOWN_API_KEY||'').trim()),ukPlayerMarketsAvailable:Boolean(ukOddsData?.playerMarketsAvailable)},matchOdds:{available:oddsAvailable,homeOdds,awayOdds,favorite:favoriteSide,bookmakersCount:matchOdds?.bookmakersCount||0,source:matchOdds?.oddsSource||''},headToHead:{matches:h2hMatches.length,playerStatsMatches:h2hPlayerResults.filter(r=>(r.players||[]).length>0).length,results:h2hMatches.map(m=>{const result=h2hPlayerResults.find(r=>String(r.match._matchId)===String(m._matchId));const scorerRows=(result&&result.players||[]).map(row=>({row,goals:getStat(row,'goals'),assists:getStat(row,'assists')})).filter(x=>x.goals>0);return {date:matchDateKey(m),home:m.home&&m.home.name||m.home_team&&m.home_team.name||'',away:m.away&&m.away.name||m.away_team&&m.away_team.name||'',scoreHome:m.score_home,scoreAway:m.score_away,playerStatsAvailable:Boolean(result&&(result.players||[]).length),scorers:scorerRows.map(x=>({name:x.row.player&&x.row.player.name||'Giocatore',team:String(x.row.team_id)===homeId?home.name:away.name,goals:x.goals,assists:x.assists}))};})},model:'poisson-shrunk-v4-expanded-candidates',weights:{goal:{recentGoals:8,xG:18,shots:15,shotsOnTarget:12,finishing:8,teamAttack:10,opponentDefense:12,homeAdvantage:5,minutes:7,matchOdds:2,headToHead:2,designatedPenaltyTaker:1},goalAssist:{goalContributions:12,xG:15,shots:12,shotsOnTarget:10,assists:13,chanceCreation:9,teamAttack:8,opponentDefense:10,homeAdvantage:3,minutes:5,matchOdds:1,headToHead:2}},teamContext:{home:teamForm.get(homeId),away:teamForm.get(awayId)},players:players.slice(0,40)});
+    return res.status(200).json({message,diagnostics,oddsProviders:{theOddsApi:Boolean((process.env.ODDS_API_KEY||'').trim()),ukOddsApi:Boolean((process.env.UKODDS_API_KEY||'').trim()),sportsGameOdds:Boolean((process.env.SPORTSGAMEODDS_API_KEY||'').trim()),theRundown:Boolean((process.env.THERUNDOWN_API_KEY||'').trim()),ukPlayerMarketsAvailable:Boolean(ukOddsData?.playerMarketsAvailable)},matchOdds:{available:oddsAvailable,homeOdds,awayOdds,favorite:favoriteSide,bookmakersCount:matchOdds?.bookmakersCount||0,source:matchOdds?.oddsSource||''},headToHead:{matches:h2hMatches.length,playerStatsMatches:h2hPlayerResults.filter(r=>(r.players||[]).length>0).length,results:h2hMatches.map(m=>{const result=h2hPlayerResults.find(r=>String(r.match._matchId)===String(m._matchId));const scorerRows=(result&&result.players||[]).map(row=>({row,goals:getStat(row,'goals'),assists:getStat(row,'assists')})).filter(x=>x.goals>0);return {date:matchDateKey(m),home:m.home&&m.home.name||m.home_team&&m.home_team.name||'',away:m.away&&m.away.name||m.away_team&&m.away_team.name||'',scoreHome:m.score_home,scoreAway:m.score_away,playerStatsAvailable:Boolean(result&&(result.players||[]).length),scorers:scorerRows.map(x=>({name:x.row.player&&x.row.player.name||'Giocatore',team:String(x.row.team_id)===homeId?home.name:away.name,goals:x.goals,assists:x.assists}))};})},model:'poisson-shrunk-v4-expanded-candidates',weights:{goal:{recentGoals:9,xG:18,shots:12,shotsOnTarget:11,shotAccuracy:5,finishing:5,teamAttack:10,opponentDefense:12,homeAdvantage:5,minutes:6,matchOdds:2,headToHead:2,designatedPenaltyTaker:3},goalAssist:{goalContributions:12,xG:15,shots:9,shotsOnTarget:8,shotAccuracy:4,assists:14,chanceCreation:13,teamAttack:8,opponentDefense:10,homeAdvantage:3,minutes:2,matchOdds:1,headToHead:1}},teamContext:{home:teamForm.get(homeId),away:teamForm.get(awayId)},players:players.slice(0,40)});
   } catch (error) {
     res.setHeader('Cache-Control','no-store, max-age=0');
     const status = error.status || 502;
