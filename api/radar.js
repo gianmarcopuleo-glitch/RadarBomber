@@ -503,7 +503,6 @@ module.exports = async function handler(req, res) {
     const homeOdds=matchOdds?.homeOdds??null, awayOdds=matchOdds?.awayOdds??null;
     const oddsAvailable=homeOdds!=null&&awayOdds!=null;
     const favoriteSide=matchOdds?.favorite||null;
-    const favoriteTeamId=favoriteSide==='home'?String(fixture.home_team&&fixture.home_team.id||''):favoriteSide==='away'?String(fixture.away_team&&fixture.away_team.id||''):'';
     const oddsSideScore = odds => odds == null ? 50 : odds <= 1.50 ? 92 : odds <= 1.75 ? 82 : odds <= 2.00 ? 72 : odds <= 2.50 ? 60 : odds <= 3.25 ? 45 : 30;
     const home = fixture.home_team || {};
     const away = fixture.away_team || {};
@@ -887,7 +886,7 @@ module.exports = async function handler(req, res) {
       ? 'Analisi dei giocatori di entrambe le squadre. Quote 1X2 '+(oddsAvailable?'disponibili come fattore informativo':'non disponibili; analisi comunque eseguita senza filtri quote')+'. '+(lineupConfirmed
           ? 'Formazione ufficiale pubblicata: sono mostrati i titolari ufficiali.'
           : lineupAvailable
-            ? 'Formazione disponibile: i titolari previsti sono favoriti; gli altri restano monitorabili ma non sono proposte giocabili.'
+            ? 'Formazione probabile o ufficiale disponibile: vengono mostrati solo i titolari indicati dal provider.'
             : 'Formazione non ancora disponibile: candidati individuati dalle statistiche recenti, ma non confermati titolari.') + ' ' + diagnostics.join(' | ')
       : 'Nessun giocatore con gol o assist rilevati nelle ultime partite concluse disponibili per questa gara. ' + diagnostics.join(' | ');
     // L'analisi non va memorizzata a lungo: rose e formazioni possono cambiare.
