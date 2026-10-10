@@ -572,6 +572,9 @@ module.exports = async function handler(req, res) {
     }));
     const allMatches = [...new Map(leagueResults.flat().map(m => [m.id,m])).values()];
     const targetDate = String(fixture.date || date);
+    // Pool storico condiviso da H2H e rendimento recente. Deve vivere fuori dal try:
+    // recentFor() lo usa anche dopo la costruzione dei precedenti diretti.
+    let matchPool = allMatches;
     // Head-to-head reale: storico dei confronti diretti e statistiche individuali recuperabili.
     let h2hMatches=[], h2hPlayerResults=[];
     try {
@@ -585,7 +588,7 @@ module.exports = async function handler(req, res) {
         fixture.league&&fixture.league.id,
         leagueSeason&&leagueSeason.season
       );
-      const matchPool=[...new Map([...allMatches,...seasonMatches].filter(m=>m&&m.id).map(m=>[String(m.id),m])).values()];
+      matchPool=[...new Map([...allMatches,...seasonMatches].filter(m=>m&&m.id).map(m=>[String(m.id),m])).values()];
       h2hMatches=rawH2H.map(h=>{
         const ht=String(h.home&&h.home.id || h.home_team&&h.home_team.id || '');
         const at=String(h.away&&h.away.id || h.away_team&&h.away_team.id || '');
