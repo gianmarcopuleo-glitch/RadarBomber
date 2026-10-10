@@ -1002,6 +1002,19 @@ module.exports = async function handler(req, res) {
         if(own){tf.shotsFor+=own.shots;tf.xgFor+=own.xg;tf.shotMatches++;tf.xgMatches++;}
         if(opp){tf.shotsAgainst+=opp.shots;tf.xgAgainst+=opp.xg;}
       }
+      // Conteggio di riserva dei gol dai tiri: alcune risposte del provider
+      // possono avere i tiri ma non la riga statistica individuale completa.
+      // Usiamo il massimo tra dato ufficiale e tiri-gol per partita, mai la somma,
+      // così lo stesso gol non viene contato due volte.
+      const shotGoalsByPlayer = new Map();
+      for (const shot of result.shots || []) {
+        const shotTeamId=String(shot.team_id||'');
+        const shotPlayer=shot.player||{};
+        if ((shotTeamId!==homeId&&shotTeamId!==awayId) || !shotPlayer.id ||
+            shot.event_type!=='Goal' || shot.is_own_goal===true) continue;
+        const goalKey=shotTeamId+':'+String(shotPlayer.id);
+        shotGoalsByPlayer.set(goalKey,(shotGoalsByPlayer.get(goalKey)||0)+1);
+      }
       for (const p of result.players || []) {
         const teamId=String(p.team_id||'');
         if(teamId!==homeId&&teamId!==awayId)continue;
@@ -1018,7 +1031,7 @@ module.exports = async function handler(req, res) {
         const entry=playersByKey.get(key);
         if(!entry._appearanceMatches.has(String(match.id))){
           entry._appearanceMatches.add(String(match.id));entry.appearances++;
-          entry.goals+=getStat(p,'goals');entry.assists+=getStat(p,'assists');
+          entry.goals+=Math.max(getStat(p,'goals'),shotGoalsByPlayer.get(key)||0);entry.assists+=getStat(p,'assists');
           entry.minutes+=statAny(p,['minutes_played','minutes']);
           entry.statsShots+=statAny(p,['total_shots','shots']);
           entry.statsShotsOnTarget+=statAny(p,['shots_on_target']);
@@ -1042,8 +1055,12 @@ module.exports = async function handler(req, res) {
         entry.shots++;
         entry.xg+=Number(shot.expected_goals)||0;
         if(shot.is_on_target)entry.shotsOnTarget++;
-        if(!entry._appearanceMatches.has(String(match.id))){entry._appearanceMatches.add(String(match.id));entry.appearances++;}
-        if(shot.event_type==='Goal' && !shot.is_own_goal)entry.goals=Math.max(entry.goals,0);
+        if(!entry._appearanceMatches.has(String(match.id))){
+          entry._appearanceMatches.add(String(match.id));entry.appearances++;
+          // Se manca la riga del giocatore nell'endpoint statistiche, il gol
+          // ricavato dai tiri è comunque attribuito una sola volta per partita.
+          entry.goals+=shotGoalsByPlayer.get(key)||0;
+        }
       }
     }
 
