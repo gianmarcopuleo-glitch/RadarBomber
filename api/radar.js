@@ -1121,17 +1121,17 @@ module.exports = async function handler(req, res) {
         const penaltyTakerScore=penaltyTaker===true?100:penaltyTaker===false?0:50;
         const goalIndex=weighted([
           // Priorità ai segnali individuali verificabili: il contesto aiuta, ma non decide da solo.
-          [goalComponents.recentGoals,15],[goalComponents.expectedGoals,22],[goalComponents.shotVolume,14],
-          [goalComponents.shotsOnTarget,10],[goalComponents.finishing,7],[goalComponents.teamAttack,7],
-          [goalComponents.opponentDefense,6],[goalComponents.homeAdvantage,3],[goalComponents.minutes,5],
-          [matchOddsScore,4],[h2hGoalScore,5],[penaltyTakerScore,2]
+          [goalComponents.recentGoals,8],[goalComponents.expectedGoals,18],[goalComponents.shotVolume,15],
+          [goalComponents.shotsOnTarget,12],[goalComponents.finishing,8],[goalComponents.teamAttack,10],
+          [goalComponents.opponentDefense,12],[goalComponents.homeAdvantage,5],[goalComponents.minutes,7],
+          [matchOddsScore,2],[h2hGoalScore,2],[penaltyTakerScore,1]
         ]);
         const gaIndex=weighted([
           // Gol/assist: contributi, xG, tiri, assist e creazione occasioni sono il nucleo del punteggio.
-          [gaComponents.goalContributions,18],[gaComponents.expectedGoals,20],[gaComponents.shotVolume,12],
-          [gaComponents.shotsOnTarget,8],[gaComponents.assists,15],[gaComponents.chanceCreation,10],
-          [gaComponents.teamAttack,5],[gaComponents.opponentDefense,4],[gaComponents.homeAdvantage,2],[gaComponents.minutes,2],
-          [matchOddsScore,2],[h2hGaScore,2]
+          [gaComponents.goalContributions,12],[gaComponents.expectedGoals,15],[gaComponents.shotVolume,12],
+          [gaComponents.shotsOnTarget,10],[gaComponents.assists,13],[gaComponents.chanceCreation,9],
+          [gaComponents.teamAttack,8],[gaComponents.opponentDefense,10],[gaComponents.homeAdvantage,3],[gaComponents.minutes,5],
+          [matchOddsScore,1],[h2hGaScore,2]
         ]);
         // Probabilità evento: conversione Poisson da tassi individuali regolarizzati.
         // La regolarizzazione riduce l'effetto di campioni piccoli; non sostituisce una calibrazione storica.
@@ -1217,7 +1217,7 @@ module.exports = async function handler(req, res) {
       : 'Nessun giocatore con gol o assist rilevati nelle ultime partite concluse disponibili per questa gara. ' + diagnostics.join(' | ');
     // L'analisi non va memorizzata a lungo: rose e formazioni possono cambiare.
     res.setHeader('Cache-Control','no-store, max-age=0');
-    return res.status(200).json({message,diagnostics,oddsProviders:{theOddsApi:Boolean((process.env.ODDS_API_KEY||'').trim()),ukOddsApi:Boolean((process.env.UKODDS_API_KEY||'').trim()),sportsGameOdds:Boolean((process.env.SPORTSGAMEODDS_API_KEY||'').trim()),theRundown:Boolean((process.env.THERUNDOWN_API_KEY||'').trim()),ukPlayerMarketsAvailable:Boolean(ukOddsData?.playerMarketsAvailable)},matchOdds:{available:oddsAvailable,homeOdds,awayOdds,favorite:favoriteSide,bookmakersCount:matchOdds?.bookmakersCount||0,source:matchOdds?.oddsSource||''},headToHead:{matches:h2hMatches.length,playerStatsMatches:h2hPlayerResults.filter(r=>(r.players||[]).length>0).length,results:h2hMatches.map(m=>{const result=h2hPlayerResults.find(r=>String(r.match._matchId)===String(m._matchId));const scorerRows=(result&&result.players||[]).map(row=>({row,goals:getStat(row,'goals'),assists:getStat(row,'assists')})).filter(x=>x.goals>0);return {date:matchDateKey(m),home:m.home&&m.home.name||m.home_team&&m.home_team.name||'',away:m.away&&m.away.name||m.away_team&&m.away_team.name||'',scoreHome:m.score_home,scoreAway:m.score_away,playerStatsAvailable:Boolean(result&&(result.players||[]).length),scorers:scorerRows.map(x=>({name:x.row.player&&x.row.player.name||'Giocatore',team:String(x.row.team_id)===homeId?home.name:away.name,goals:x.goals,assists:x.assists}))};})},model:'poisson-shrunk-v4-expanded-candidates',weights:{goal:{recentGoals:14,xG:18,shots:13,shotsOnTarget:8,finishing:5,teamAttack:6,opponentDefense:6,homeAdvantage:8,minutes:3,matchOdds:5,headToHead:10,designatedPenaltyTaker:4},goalAssist:{goalContributions:13,xG:16,shots:11,shotsOnTarget:8,assists:12,chanceCreation:7,teamAttack:5,opponentDefense:6,homeAdvantage:8,minutes:2,matchOdds:4,headToHead:8}},teamContext:{home:teamForm.get(homeId),away:teamForm.get(awayId)},players:players.slice(0,40)});
+    return res.status(200).json({message,diagnostics,oddsProviders:{theOddsApi:Boolean((process.env.ODDS_API_KEY||'').trim()),ukOddsApi:Boolean((process.env.UKODDS_API_KEY||'').trim()),sportsGameOdds:Boolean((process.env.SPORTSGAMEODDS_API_KEY||'').trim()),theRundown:Boolean((process.env.THERUNDOWN_API_KEY||'').trim()),ukPlayerMarketsAvailable:Boolean(ukOddsData?.playerMarketsAvailable)},matchOdds:{available:oddsAvailable,homeOdds,awayOdds,favorite:favoriteSide,bookmakersCount:matchOdds?.bookmakersCount||0,source:matchOdds?.oddsSource||''},headToHead:{matches:h2hMatches.length,playerStatsMatches:h2hPlayerResults.filter(r=>(r.players||[]).length>0).length,results:h2hMatches.map(m=>{const result=h2hPlayerResults.find(r=>String(r.match._matchId)===String(m._matchId));const scorerRows=(result&&result.players||[]).map(row=>({row,goals:getStat(row,'goals'),assists:getStat(row,'assists')})).filter(x=>x.goals>0);return {date:matchDateKey(m),home:m.home&&m.home.name||m.home_team&&m.home_team.name||'',away:m.away&&m.away.name||m.away_team&&m.away_team.name||'',scoreHome:m.score_home,scoreAway:m.score_away,playerStatsAvailable:Boolean(result&&(result.players||[]).length),scorers:scorerRows.map(x=>({name:x.row.player&&x.row.player.name||'Giocatore',team:String(x.row.team_id)===homeId?home.name:away.name,goals:x.goals,assists:x.assists}))};})},model:'poisson-shrunk-v4-expanded-candidates',weights:{goal:{recentGoals:8,xG:18,shots:15,shotsOnTarget:12,finishing:8,teamAttack:10,opponentDefense:12,homeAdvantage:5,minutes:7,matchOdds:2,headToHead:2,designatedPenaltyTaker:1},goalAssist:{goalContributions:12,xG:15,shots:12,shotsOnTarget:10,assists:13,chanceCreation:9,teamAttack:8,opponentDefense:10,homeAdvantage:3,minutes:5,matchOdds:1,headToHead:2}},teamContext:{home:teamForm.get(homeId),away:teamForm.get(awayId)},players:players.slice(0,40)});
   } catch (error) {
     res.setHeader('Cache-Control','no-store, max-age=0');
     const status = error.status || 502;
