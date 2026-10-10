@@ -446,6 +446,169 @@ function ukPlayerMarketOdds(player,markets) {
   return {goal:best(goal),goalOrAssist:best(goalOrAssist)};
 }
 
+
+// SportsGameOdds: provider aggiuntivo per quote partita e mercati giocatore.
+// Il piano gratuito ha limiti di richieste/oggetti; cache e chiamate opzionali
+// evitano che un errore del provider interrompa l'analisi statistica.
+const sgoCache={at:0,events:[]};
+async function sgoEvents() {
+  const key=(process.env.SPORTSGAMEODDS_API_KEY||'').trim();
+  if(!key)return [];
+  if(sgoCache.events.length&&Date.now()-sgoCache.at<4*60*1000)return sgoCache.events;
+  const response=await fetch('https://api.sportsgameodds.com/v2/events/?sportID=SOCCER&oddsAvailable=true&limit=100',{
+    headers:{'X-Api-Key':key},signal:AbortSignal.timeout(12000)
+  });
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok||data.success===false)throw new Error('SportsGameOdds HTTP '+response.status);
+  const events=Array.isArray(data.data)?data.data:Array.isArray(data.events)?data.events:[];
+  sgoCache.at=Date.now();sgoCache.events=events;
+  return events;
+}
+function sgoEventTeams(event) {
+  const teams=Array.isArray(event.teams)?event.teams:[];
+  const home=event.homeTeam?.name||event.homeTeamName||event.home_team?.name||event.home_team||teams.find(t=>t.home===true||t.isHome===true)?.name||teams[0]?.name||'';
+  const away=event.awayTeam?.name||event.awayTeamName||event.away_team?.name||event.away_team||teams.find(t=>t.away===true||t.isAway===true)?.name||teams[1]?.name||'';
+  return {home:String(home||''),away:String(away||'')};
+}
+function sgoEventTime(event) {
+  return event.startTime||event.startDate||event.eventTime||event.eventDate||event.commenceTime||event.startsAt||event.date||'';
+}
+function sgoFindEvent(fixture,events) {
+  const home=fixture.home_team?.name||'',away=fixture.away_team?.name||'';
+  const time=Date.parse(fixture.time_utc||fixture.date||'');
+  const candidates=(events||[]).filter(event=>{
+    const teams=sgoEventTeams(event);
+    if(!sameTeam(teams.home,home)||!sameTeam(teams.away,away))return false;
+    const et=Date.parse(sgoEventTime(event)||'');
+    return !(Number.isFinite(time)&&Number.isFinite(et)&&Math.abs(time-et)>8*60*60*1000);
+  });
+  candidates.sort((a,b)=>{
+    const ta=Date.parse(sgoEventTime(a)||''),tb=Date.parse(sgoEventTime(b)||'');
+    return Number.isFinite(time)&&Number.isFinite(ta)&&Number.isFinite(tb)?Math.abs(ta-time)-Math.abs(tb-time):0;
+  });
+  return candidates[0]||null;
+}
+function sgoPrice(record) {
+  if(record==null)return null;
+  if(typeof record==='number')return record>1?record:null;
+  const decimal=Number(record.oddsDecimal??record.decimalOdds??record.priceDecimal??record.decimal);
+  if(Number.isFinite(decimal)&&decimal>1)return decimal;
+  const american=Number(record.oddsAmerican??record.americanOdds??record.priceAmerican??record.price);
+  if(Number.isFinite(american)&&american!==0) return american>0?Number((1+american/100).toFixed(3)):Number((1+100/Math.abs(american)).toFixed(3));
+  return null;
+}
+function sgoBookQuotes(odd) {
+  const by=odd?.byBookmaker||odd?.bySportsbook||odd?.bookmakers||{};
+  const out=[];
+  for(const [id,record] of Object.entries(by)){
+    const rows=Array.isArray(record)?record:[record];
+    for(const row of rows){
+      const raw=row?.odds??row?.price??row;
+      const price=sgoPrice(raw);
+      if(price>1)out.push({odds:price,bookmaker:row?.bookmakerName||row?.bookmaker||row?.name||id});
+    }
+  }
+  return out;
+}
+function sgoMatchOdds(event,fixture) {
+  const odds=event?.odds||{};
+  const homeName=fixture.home_team?.name||'',awayName=fixture.away_team?.name||'';
+  const homeQuotes=[],awayQuotes=[];
+  for(const [id,odd] of Object.entries(odds)){
+    const stat=normalize(odd?.statID||odd?.marketName||odd?.name||id);
+    const entity=normalize(odd?.statEntityID||odd?.sideID||'');
+    if(!/(moneyline|match winner|match result|winner|1x2|ml)/.test(stat+' '+normalize(id)))continue;
+    const quotes=sgoBookQuotes(odd);
+    if(entity==='home'||entity.includes('home')||sameTeam(entity,homeName))homeQuotes.push(...quotes);
+    if(entity==='away'||entity.includes('away')||sameTeam(entity,awayName))awayQuotes.push(...quotes);
+  }
+  const best=arr=>arr.slice().sort((a,b)=>b.odds-a.odds)[0]||null;
+  const avg=arr=>arr.length?Number((arr.reduce((n,q)=>n+q.odds,0)/arr.length).toFixed(2)):null;
+  const bh=best(homeQuotes),ba=best(awayQuotes),homeOdds=avg(homeQuotes),awayOdds=avg(awayQuotes);
+  return {homeOdds,awayOdds,favorite:homeOdds!=null&&awayOdds!=null?(homeOdds<awayOdds?'home':awayOdds<homeOdds?'away':null):null,
+    bookmakersCount:Math.min(homeQuotes.length,awayQuotes.length),bestHomeOdds:bh?.odds??null,bestHomeBook:bh?.bookmaker||'',
+    bestAwayOdds:ba?.odds??null,bestAwayBook:ba?.bookmaker||'',oddsSource:'SportsGameOdds'};
+}
+function sgoPlayerOdds(player,event) {
+  const allOdds=event?.odds||{},players=Array.isArray(event?.players)?event.players:Array.isArray(event?.participants)?event.participants:[];
+  const normalizedName=normalize(player.name||'');
+  const playerRecord=players.find(p=>normalize(p.name||p.playerName||'')===normalizedName);
+  const ids=new Set([playerRecord?.playerID,playerRecord?.playerId,playerRecord?.id,playerRecord?.statEntityID].filter(Boolean).map(String));
+  const goal=[],goalOrAssist=[];
+  for(const [key,odd] of Object.entries(allOdds)){
+    const stat=normalize(odd?.statID||odd?.statName||odd?.marketName||odd?.name||key);
+    const entity=String(odd?.statEntityID||odd?.playerID||odd?.playerId||'');
+    const keyHasPlayer=[...ids].some(id=>entity===id||key.includes(id));
+    const label=normalize([odd?.name,odd?.marketName,odd?.statID,key].filter(Boolean).join(' '));
+    const combo=/(goal assist|goals assists|score or assist|goal contribution|goals and assists)/.test(label);
+    const scorer=/(goal|scorer|score)/.test(stat+' '+label)&&!/(team|total|against)/.test(label);
+    if(!keyHasPlayer||(!combo&&!scorer))continue;
+    for(const q of sgoBookQuotes(odd)){
+      const item={market:odd?.name||odd?.marketName||key,odds:q.odds,bookmaker:q.bookmaker};
+      (combo?goalOrAssist:goal).push(item);
+    }
+  }
+  const unique=arr=>[...new Map(arr.map(q=>[q.bookmaker+'|'+q.market,q])).values()].sort((a,b)=>b.odds-a.odds);
+  return {goal:unique(goal),goalOrAssist:unique(goalOrAssist)};
+}
+
+// TheRundown: il piano gratuito offre solo mercati partita (non player props).
+const rundownCache=new Map();
+async function rundownEventsForFixture(fixture) {
+  const key=(process.env.THERUNDOWN_API_KEY||'').trim();
+  if(!key)return null;
+  const league=normalize(fixture.league?.name||'');
+  const sportId=/serie a/.test(league)?15:/premier league/.test(league)?11:/ligue 1/.test(league)?12:/bundesliga/.test(league)?13:/la liga/.test(league)?14:/champions league/.test(league)?16:/europa league/.test(league)?33:/mls/.test(league)?10:/international|world cup|euro/.test(league)?18:null;
+  if(!sportId)return null;
+  const fixtureDate=ukDate(fixture.time_utc||fixture.date||'');
+  if(!fixtureDate)return null;
+  const cacheKey=sportId+':'+fixtureDate;
+  let cached=rundownCache.get(cacheKey);
+  if(!cached||Date.now()-cached.at>4*60*1000){
+    const url='https://therundown.io/api/v2/sports/'+sportId+'/events/'+fixtureDate+'?'+new URLSearchParams({market_ids:'1,2,3',affiliate_ids:'3,19,23',main_line:'true',hide_closed:'true'});
+    const response=await fetch(url,{headers:{'X-TheRundown-Key':key},signal:AbortSignal.timeout(12000)});
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error('TheRundown HTTP '+response.status);
+    cached={at:Date.now(),events:Array.isArray(data.events)?data.events:[]};rundownCache.set(cacheKey,cached);
+  }
+  const home=fixture.home_team?.name||'',away=fixture.away_team?.name||'',ft=Date.parse(fixture.time_utc||fixture.date||'');
+  const candidates=cached.events.filter(e=>{
+    const names=Array.isArray(e.teams)?e.teams.map(t=>typeof t==='string'?t:t.name||''):[];
+    const eh=e.home_team?.name||e.home_team||e.homeTeam?.name||names[0]||'';
+    const ea=e.away_team?.name||e.away_team||e.awayTeam?.name||names[1]||'';
+    const et=Date.parse(e.event_date||e.eventDate||e.commence_time||'');
+    return sameTeam(eh,home)&&sameTeam(ea,away)&&!(Number.isFinite(ft)&&Number.isFinite(et)&&Math.abs(ft-et)>8*60*60*1000);
+  });
+  return candidates[0]||null;
+}
+function rundownMatchOdds(event,fixture) {
+  if(!event)return null;
+  const home=fixture.home_team?.name||'',away=fixture.away_team?.name||'',hq=[],aq=[];
+  const americanToDecimal=v=>{const n=Number(v);return !Number.isFinite(n)||n===0?null:n>0?Number((1+n/100).toFixed(3)):Number((1+100/Math.abs(n)).toFixed(3));};
+  for(const market of event.markets||[]){
+    const name=normalize(market.name||market.market_name||'');
+    if(!/(moneyline|match winner|match result|1x2|winner)/.test(name))continue;
+    for(const participant of market.participants||[]){
+      const n=participant.name||participant.participantName||'';
+      const isHome=sameTeam(n,home),isAway=sameTeam(n,away);
+      if(!isHome&&!isAway)continue;
+      const lines=Array.isArray(participant.lines)?participant.lines:[{}];
+      for(const line of lines){
+        for(const [book,priceRow] of Object.entries(line.prices||{})){
+          const raw=priceRow?.price??priceRow?.odds??priceRow;
+          const price=americanToDecimal(raw);
+          if(price>1)(isHome?hq:aq).push({price,book});
+        }
+      }
+    }
+  }
+  const avg=arr=>arr.length?Number((arr.reduce((n,q)=>n+q.price,0)/arr.length).toFixed(2)):null;
+  const bh=hq.slice().sort((a,b)=>b.price-a.price)[0],ba=aq.slice().sort((a,b)=>b.price-a.price)[0];
+  const homeOdds=avg(hq),awayOdds=avg(aq);
+  if(homeOdds==null||awayOdds==null)return null;
+  return {homeOdds,awayOdds,favorite:homeOdds<awayOdds?'home':homeOdds<awayOdds?'away':null,bookmakersCount:Math.min(hq.length,aq.length),bestHomeOdds:bh?.price??null,bestHomeBook:bh?.book||'',bestAwayOdds:ba?.price??null,bestAwayBook:ba?.book||'',oddsSource:'TheRundown'};
+}
+
 async function pitch(path) {
   const key = (process.env.PITCHAPI_API_KEY || '').trim();
   if (!key) {
@@ -630,9 +793,11 @@ module.exports = async function handler(req, res) {
     if (!allowedLeague(fixture.league)) return res.status(403).json({error:'Competizione esclusa: sono ammesse solo le competizioni principali selezionate.'});
     // Le quote 1X2 non sono obbligatorie: tentiamo di recuperarle, ma se mancano
     // o l'API è in errore l'analisi statistica prosegue senza bonus quote.
-    let matchOdds=null, ukOddsData=null;
+    let matchOdds=null, ukOddsData=null, sgoEvent=null, rundownEvent=null;
     try { matchOdds=await oddsForFixture(fixture); } catch {}
     try { ukOddsData=await ukOddsForFixture(fixture); } catch {}
+    try { if((process.env.SPORTSGAMEODDS_API_KEY||'').trim()){const events=await sgoEvents();sgoEvent=sgoFindEvent(fixture,events);if((matchOdds?.homeOdds==null||matchOdds?.awayOdds==null)&&sgoEvent)matchOdds=sgoMatchOdds(sgoEvent,fixture);}} catch {}
+    try { rundownEvent=await rundownEventsForFixture(fixture);if((matchOdds?.homeOdds==null||matchOdds?.awayOdds==null)&&rundownEvent)matchOdds=rundownMatchOdds(rundownEvent,fixture)||matchOdds; } catch {}
     if((matchOdds?.homeOdds==null||matchOdds?.awayOdds==null)&&ukOddsData?.matchOdds?.homeOdds!=null&&ukOddsData?.matchOdds?.awayOdds!=null) matchOdds={...ukOddsData.matchOdds,...matchOdds,homeOdds:ukOddsData.matchOdds.homeOdds,awayOdds:ukOddsData.matchOdds.awayOdds,oddsSource:'UK Odds API'};
     const homeOdds=matchOdds?.homeOdds??null, awayOdds=matchOdds?.awayOdds??null;
     const oddsAvailable=homeOdds!=null&&awayOdds!=null;
@@ -1017,6 +1182,9 @@ module.exports = async function handler(req, res) {
     if(ukOddsData?.markets?.length){
       for(const player of players){player.ukOdds=ukPlayerMarketOdds(player,ukOddsData.markets);}
     }
+    if(sgoEvent){
+      for(const player of players){player.sportsGameOdds=sgoPlayerOdds(player,sgoEvent);}
+    }
     const diagnostics = [];
     if((process.env.UKODDS_API_KEY||'').trim()) diagnostics.push(ukOddsData ? ('UK Odds API: '+(ukOddsData.playerMarketsAvailable?'mercati avanzati consultati':'solo mercati core disponibili; i mercati giocatore richiedono piano Pro o superiore')+'.') : 'UK Odds API configurata ma quote non agganciate a questa partita.');
     if (homeRecent.length<5 || awayRecent.length<5) diagnostics.push('Campione recente incompleto: ultime gare trovate casa='+homeRecent.length+', ospite='+awayRecent.length+'.');
@@ -1032,7 +1200,7 @@ module.exports = async function handler(req, res) {
       : 'Nessun giocatore con gol o assist rilevati nelle ultime partite concluse disponibili per questa gara. ' + diagnostics.join(' | ');
     // L'analisi non va memorizzata a lungo: rose e formazioni possono cambiare.
     res.setHeader('Cache-Control','no-store, max-age=0');
-    return res.status(200).json({message,diagnostics,oddsProviders:{theOddsApi:Boolean((process.env.ODDS_API_KEY||'').trim()),ukOddsApi:Boolean((process.env.UKODDS_API_KEY||'').trim()),ukPlayerMarketsAvailable:Boolean(ukOddsData?.playerMarketsAvailable)},matchOdds:{available:oddsAvailable,homeOdds,awayOdds,favorite:favoriteSide,bookmakersCount:matchOdds?.bookmakersCount||0,source:matchOdds?.oddsSource||''},headToHead:{matches:h2hMatches.length,playerStatsMatches:h2hPlayerResults.filter(r=>(r.players||[]).length>0).length,results:h2hMatches.map(m=>{const result=h2hPlayerResults.find(r=>String(r.match._matchId)===String(m._matchId));const scorerRows=(result&&result.players||[]).map(row=>({row,goals:getStat(row,'goals'),assists:getStat(row,'assists')})).filter(x=>x.goals>0);return {date:matchDateKey(m),home:m.home&&m.home.name||m.home_team&&m.home_team.name||'',away:m.away&&m.away.name||m.away_team&&m.away_team.name||'',scoreHome:m.score_home,scoreAway:m.score_away,playerStatsAvailable:Boolean(result&&(result.players||[]).length),scorers:scorerRows.map(x=>({name:x.row.player&&x.row.player.name||'Giocatore',team:String(x.row.team_id)===homeId?home.name:away.name,goals:x.goals,assists:x.assists}))};})},model:'poisson-shrunk-v4-expanded-candidates',weights:{goal:{recentGoals:14,xG:18,shots:13,shotsOnTarget:8,finishing:5,teamAttack:6,opponentDefense:6,homeAdvantage:8,minutes:3,matchOdds:5,headToHead:10,designatedPenaltyTaker:4},goalAssist:{goalContributions:13,xG:16,shots:11,shotsOnTarget:8,assists:12,chanceCreation:7,teamAttack:5,opponentDefense:6,homeAdvantage:8,minutes:2,matchOdds:4,headToHead:8}},teamContext:{home:teamForm.get(homeId),away:teamForm.get(awayId)},players:players.slice(0,40)});
+    return res.status(200).json({message,diagnostics,oddsProviders:{theOddsApi:Boolean((process.env.ODDS_API_KEY||'').trim()),ukOddsApi:Boolean((process.env.UKODDS_API_KEY||'').trim()),sportsGameOdds:Boolean((process.env.SPORTSGAMEODDS_API_KEY||'').trim()),theRundown:Boolean((process.env.THERUNDOWN_API_KEY||'').trim()),ukPlayerMarketsAvailable:Boolean(ukOddsData?.playerMarketsAvailable)},matchOdds:{available:oddsAvailable,homeOdds,awayOdds,favorite:favoriteSide,bookmakersCount:matchOdds?.bookmakersCount||0,source:matchOdds?.oddsSource||''},headToHead:{matches:h2hMatches.length,playerStatsMatches:h2hPlayerResults.filter(r=>(r.players||[]).length>0).length,results:h2hMatches.map(m=>{const result=h2hPlayerResults.find(r=>String(r.match._matchId)===String(m._matchId));const scorerRows=(result&&result.players||[]).map(row=>({row,goals:getStat(row,'goals'),assists:getStat(row,'assists')})).filter(x=>x.goals>0);return {date:matchDateKey(m),home:m.home&&m.home.name||m.home_team&&m.home_team.name||'',away:m.away&&m.away.name||m.away_team&&m.away_team.name||'',scoreHome:m.score_home,scoreAway:m.score_away,playerStatsAvailable:Boolean(result&&(result.players||[]).length),scorers:scorerRows.map(x=>({name:x.row.player&&x.row.player.name||'Giocatore',team:String(x.row.team_id)===homeId?home.name:away.name,goals:x.goals,assists:x.assists}))};})},model:'poisson-shrunk-v4-expanded-candidates',weights:{goal:{recentGoals:14,xG:18,shots:13,shotsOnTarget:8,finishing:5,teamAttack:6,opponentDefense:6,homeAdvantage:8,minutes:3,matchOdds:5,headToHead:10,designatedPenaltyTaker:4},goalAssist:{goalContributions:13,xG:16,shots:11,shotsOnTarget:8,assists:12,chanceCreation:7,teamAttack:5,opponentDefense:6,homeAdvantage:8,minutes:2,matchOdds:4,headToHead:8}},teamContext:{home:teamForm.get(homeId),away:teamForm.get(awayId)},players:players.slice(0,40)});
   } catch (error) {
     res.setHeader('Cache-Control','no-store, max-age=0');
     const status = error.status || 502;
