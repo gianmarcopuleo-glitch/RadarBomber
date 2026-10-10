@@ -108,8 +108,9 @@ function comparativeIndices(items){
  }
  return rows;
 }
-function qualifiesGoal(p){return Number(p.goalIndex)>=70&&Number(p.goalProbability)>=18;}
-function qualifiesGA(p){return Number(p.gaIndex)>=70&&Number(p.gaProbability)>=28;}
+function relevantForMarket(p,market){const role=String(p.position||'').toLowerCase();if(role.includes('portiere')||role.includes('goalkeeper'))return false;const goals=Number(p.goals)||0,assists=Number(p.assists)||0;if(role.includes('difensor'))return market==='goal'?goals>0:goals+assists>0;return true;}
+function qualifiesGoal(p){return relevantForMarket(p,'goal')&&Number(p.goalIndex)>=70&&Number(p.goalProbability)>=18;}
+function qualifiesGA(p){return relevantForMarket(p,'ga')&&Number(p.gaIndex)>=70&&Number(p.gaProbability)>=28;}
 function qualifiesAny(p){return qualifiesGoal(p)||qualifiesGA(p);}
 async function scanFixturesForPlayers(fixtures){
  const status=document.getElementById('liveStatus'),out=document.getElementById('liveMatches');
@@ -177,10 +178,11 @@ function renderLivePlayers(){
  const out=document.getElementById('liveMatches');
  if(!out)return;
  // Prima mostra i profili che superano i criteri. Se nessuno li supera, mostra i migliori candidati reali come "da monitorare": non vengono promossi a giocabili e le azioni restano disabilitate.
- const playable=livePlayersData.filter(p=>liveSort==='goal'?qualifiesGoal(p):liveSort==='ga'?qualifiesGA(p):qualifiesAny(p));
- const showingCandidates=playable.length===0&&livePlayersData.length>0;
+ const relevantPlayers=livePlayersData.filter(p=>relevantForMarket(p,liveSort==='best'?'all':liveSort));
+ const playable=relevantPlayers.filter(p=>liveSort==='goal'?qualifiesGoal(p):liveSort==='ga'?qualifiesGA(p):qualifiesAny(p));
+ const showingCandidates=playable.length===0&&relevantPlayers.length>0;
  const ranked=(showingCandidates
-   ? livePlayersData.slice().sort((a,b)=>liveSort==='ga'?Number(b.gaIndex||0)-Number(a.gaIndex||0):liveSort==='goal'?Number(b.goalIndex||0)-Number(a.goalIndex||0):Math.max(Number(b.goalIndex||0),Number(b.gaIndex||0))-Math.max(Number(a.goalIndex||0),Number(a.gaIndex||0))).slice(0,12)
+   ? relevantPlayers.slice().sort((a,b)=>liveSort==='ga'?Number(b.gaIndex||0)-Number(a.gaIndex||0):liveSort==='goal'?Number(b.goalIndex||0)-Number(a.goalIndex||0):Math.max(Number(b.goalIndex||0),Number(b.gaIndex||0))-Math.max(Number(a.goalIndex||0),Number(a.gaIndex||0))).slice(0,12)
    : playable).sort((a,b)=>liveSort==='ga'?Number(b.gaIndex||0)-Number(a.gaIndex||0):liveSort==='goal'?Number(b.goalIndex||0)-Number(a.goalIndex||0):Math.max(Number(b.goalIndex||0),Number(b.gaIndex||0))-Math.max(Number(a.goalIndex||0),Number(a.gaIndex||0)));
  const isBatch=liveFixtureId===null;
  let list=ranked;
