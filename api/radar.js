@@ -873,7 +873,7 @@ module.exports = async function handler(req, res) {
         const currentSeason = current.season;
         if (!currentSeason) return [];
         const data = await pitchCached('/leagues/' + encodeURIComponent(league.id) + '/matches?season=' + encodeURIComponent(currentSeason) + '&status=all',20*60*1000);
-        return (data.matches || []).map(m => ({...m, leagueName:(data.league && data.league.name)||league.name, _season:currentSeason}));
+        return (data.matches || []).map(m => ({...m, leagueName:(data.league && data.league.name)||league.name, _leagueId:String(league.id), _season:currentSeason}));
       } catch { return []; }
     }));
     const allMatches = [...new Map(leagueResults.flat().map(m => [m.id,m])).values()];
@@ -955,7 +955,18 @@ module.exports = async function handler(req, res) {
     const homeRecent = recentFor(homeId);
     const awayRecent = recentFor(awayId);
     const gamesByTeam = new Map([[homeId,homeRecent.length],[awayId,awayRecent.length]]);
-    const uniqueMatches = [...new Map([...homeRecent,...awayRecent].map(m=>[m.id,m])).values()];
+    const fixtureLeagueId=String(fixture.league&&fixture.league.id||'');
+    const seasonMatchesForTeams=matchPool.filter(m=>{
+      const ids=matchTeams(m);
+      const matchMs=Date.parse(String(m.time_utc||m.date||''));
+      const status=normalize(m.status);
+      const finished=status==='finished'||status==='complete'||status==='completed'||(m.score_home!=null&&m.score_away!=null);
+      const belongsToFixtureLeague=String(m._leagueId||m.league&&m.league.id||'')===fixtureLeagueId;
+      return belongsToFixtureLeague && (ids.home===homeId||ids.away===homeId||ids.home===awayId||ids.away===awayId) && String(m.id)!==fixtureId && Number.isFinite(matchMs) && matchMs<targetMs && finished;
+    });
+    // Per i gol/assist usiamo tutte le partite concluse della stagione corrente
+    // nel campionato della gara analizzata, non una finestra arbitraria di 12 gare.
+    const uniqueMatches = [...new Map(seasonMatchesForTeams.map(m=>[String(m.id),m])).values()];
     const playerResults = await Promise.all(uniqueMatches.map(async m => {
       const [playerResponse, shotResponse] = await Promise.all([
         pitchCached('/matches/' + encodeURIComponent(m.id) + '/players',24*60*60*1000).then(players => ({players:Array.isArray(players)?players:[]})).catch(error => ({players:[],error:error.message})),
@@ -999,7 +1010,7 @@ module.exports = async function handler(req, res) {
         if(!playersByKey.has(key))playersByKey.set(key,{
           id:String(player.id),name:player.name,team:teamId===homeId?home.name:away.name,teamId,
           position:positionName(player.position_id),goals:0,assists:0,appearances:0,minutes:0,
-          statsShots:0,statsShotsOnTarget:0,statsXg:0,shots:0,shotsOnTarget:0,xg:0,keyPasses:0,statsSeason:'ultime 12 partite concluse',
+          statsShots:0,statsShotsOnTarget:0,statsXg:0,shots:0,shotsOnTarget:0,xg:0,keyPasses:0,statsSeason:'stagione corrente (campionato)',
           source:'PitchAPI player stats + shots/xG',starter:false,lineupKnown:false,lineupConfirmed:false,lineupType:'',injured:false,
           _appearanceMatches:new Set(),_shotMatches:new Set()
         });
@@ -1021,7 +1032,7 @@ module.exports = async function handler(req, res) {
         if(!playersByKey.has(key))playersByKey.set(key,{
           id:String(player.id),name:player.name||'Giocatore',team:teamId===homeId?home.name:away.name,teamId,
           position:positionName(player.position_id),goals:0,assists:0,appearances:0,minutes:0,
-          statsShots:0,statsShotsOnTarget:0,statsXg:0,shots:0,shotsOnTarget:0,xg:0,keyPasses:0,statsSeason:'ultime 12 partite concluse',
+          statsShots:0,statsShotsOnTarget:0,statsXg:0,shots:0,shotsOnTarget:0,xg:0,keyPasses:0,statsSeason:'stagione corrente (campionato)',
           source:'PitchAPI shots + xG',starter:false,lineupKnown:false,lineupConfirmed:false,lineupType:'',injured:false,
           _appearanceMatches:new Set(),_shotMatches:new Set()
         });
@@ -1045,7 +1056,7 @@ module.exports = async function handler(req, res) {
         id:String(playerId),name:official.name||'Giocatore',team:official.teamId===homeId?home.name:away.name,
         teamId:official.teamId,position:positionName(official.positionId),goals:0,assists:0,appearances:0,minutes:0,
         statsShots:0,statsShotsOnTarget:0,statsXg:0,shots:0,shotsOnTarget:0,xg:0,keyPasses:0,
-        statsSeason:'nessuna statistica recente disponibile',source:'PitchAPI lineup; statistiche recenti non disponibili',
+        statsSeason:'statistiche stagione non disponibili',source:'PitchAPI lineup; statistiche stagione non disponibili',
         starter:true,lineupKnown:true,lineupConfirmed,lineupType,injured:false,
         _appearanceMatches:new Set(),_shotMatches:new Set()
       });
@@ -1098,26 +1109,31 @@ module.exports = async function handler(req, res) {
           ? 0.60*(oppForm.xgAgainst/oppForm.xgMatches)+0.40*(oppForm.goalsAgainst/Math.max(1,oppForm.games))
           : oppForm.goalsAgainst/Math.max(1,oppForm.games);
         const shotAccuracy=shots>0?shotsOnTarget/shots:0;
+        const goalsPerAppearance=p.goals/Math.max(1,p.appearances);
+        const assistsPerAppearance=p.assists/Math.max(1,p.appearances);
         const goalComponents={
-          recentGoals:rateScore(goalsPer90,0.75),
-          expectedGoals:rateScore(xgPer90,0.75), // qualità delle occasioni individuali
-          shotVolume:rateScore(shotsPer90,5), // volume totale di tiro
-          shotsOnTarget:rateScore(onTargetPer90,2.5), // tiri nello specchio
-          shotAccuracy:rateScore(shotAccuracy,0.65), // precisione dei tiri
-          finishing:rateScore(conversion,0.35), // capacità realizzativa
-          teamAttack:rateScore(attackMetric,2.5), // squadra produttiva: gol + xG
-          opponentDefense:rateScore(defenseMetric,2.2), // avversaria vulnerabile: gol + xGA concessi
-          homeAdvantage:p.teamId===homeId?100:35,
-          minutes:rateScore(minutes/Math.max(1,p.appearances),90)
-        };
-        const gaComponents={
-          goalContributions:rateScore(gaPer90,1.1),
+          seasonGoals:rateScore(p.goals,4), // gol effettivi nella stagione corrente: fattore principale
+          goalFrequency:rateScore(goalsPerAppearance,0.45),
+          goalsPer90:rateScore(goalsPer90,0.50),
           expectedGoals:rateScore(xgPer90,0.75),
           shotVolume:rateScore(shotsPer90,5),
           shotsOnTarget:rateScore(onTargetPer90,2.5),
           shotAccuracy:rateScore(shotAccuracy,0.65),
-          assists:rateScore(assistsPer90,0.4),
+          finishing:rateScore(conversion,0.35),
+          teamAttack:rateScore(attackMetric,2.5),
+          opponentDefense:rateScore(defenseMetric,2.2),
+          homeAdvantage:p.teamId===homeId?100:35,
+          minutes:rateScore(minutes/Math.max(1,p.appearances),90)
+        };
+        const gaComponents={
+          seasonGoals:rateScore(p.goals,4), // gol effettivi in stagione
+          seasonAssists:rateScore(p.assists,3), // assist effettivi in stagione
+          goalContributions:rateScore((p.goals+p.assists)/Math.max(1,p.appearances),0.65),
+          contributionsPer90:rateScore(gaPer90,0.80),
+          assistsPerAppearance:rateScore(assistsPerAppearance,0.30),
+          expectedGoals:rateScore(xgPer90,0.75),
           chanceCreation:rateScore(p.keyPasses/Math.max(1,p.appearances),2.5),
+          shotVolume:rateScore(shotsPer90,5),
           teamAttack:rateScore(attackMetric,2.5),
           opponentDefense:rateScore(defenseMetric,2.2),
           homeAdvantage:p.teamId===homeId?100:35,
@@ -1129,18 +1145,18 @@ module.exports = async function handler(req, res) {
         const penaltyTaker=designatedPenaltyTaker(p);
         const penaltyTakerScore=penaltyTaker===true?100:penaltyTaker===false?0:50;
         const goalIndex=weighted([
-          // Pesi su 100: rendimento individuale e segnali di tiro prevalgono; il contesto di gara resta rilevante.
-          [goalComponents.recentGoals,9],[goalComponents.expectedGoals,18],[goalComponents.shotVolume,12],
-          [goalComponents.shotsOnTarget,11],[goalComponents.shotAccuracy,5],[goalComponents.finishing,5],
-          [goalComponents.teamAttack,10],[goalComponents.opponentDefense,12],[goalComponents.homeAdvantage,5],
-          [goalComponents.minutes,6],[matchOddsScore,2],[h2hGoalScore,2],[penaltyTakerScore,3]
+          // 100 punti: i gol stagionali e la frequenza realizzativa pesano il 75%; il contesto è marginale.
+          [goalComponents.seasonGoals,40],[goalComponents.goalFrequency,20],[goalComponents.goalsPer90,15],
+          [goalComponents.expectedGoals,5],[goalComponents.shotVolume,5],[goalComponents.shotsOnTarget,4],
+          [goalComponents.shotAccuracy,2],[goalComponents.minutes,3],[goalComponents.teamAttack,2],
+          [goalComponents.opponentDefense,2],[goalComponents.homeAdvantage,1],[penaltyTakerScore,1]
         ]);
         const gaIndex=weighted([
-          // Gol/assist: rendimento complessivo, assist e occasioni create contano quanto la qualità dei tiri.
-          [gaComponents.goalContributions,12],[gaComponents.expectedGoals,15],[gaComponents.shotVolume,9],
-          [gaComponents.shotsOnTarget,8],[gaComponents.shotAccuracy,4],[gaComponents.assists,14],
-          [gaComponents.chanceCreation,13],[gaComponents.teamAttack,8],[gaComponents.opponentDefense,10],
-          [gaComponents.homeAdvantage,3],[gaComponents.minutes,2],[matchOddsScore,1],[h2hGaScore,1]
+          // 100 punti: gol e assist reali nella stagione valgono il 56%; il contesto di squadra è marginale.
+          [gaComponents.seasonGoals,28],[gaComponents.seasonAssists,28],[gaComponents.goalContributions,15],
+          [gaComponents.contributionsPer90,10],[gaComponents.assistsPerAppearance,8],[gaComponents.expectedGoals,3],
+          [gaComponents.chanceCreation,3],[gaComponents.shotVolume,2],[gaComponents.teamAttack,1],
+          [gaComponents.opponentDefense,1],[gaComponents.homeAdvantage,1],[gaComponents.minutes,0],[h2hGaScore,0]
         ]);
         // Probabilità evento: conversione Poisson da tassi individuali regolarizzati.
         // La regolarizzazione riduce l'effetto di campioni piccoli; non sostituisce una calibrazione storica.
@@ -1184,8 +1200,7 @@ module.exports = async function handler(req, res) {
           (p.minutes>0?10:0)+(shotDataAvailable||p.statsXg>0?17:0)+(shotsOnTarget>0?8:0)
         ));
         const hasRecentEvidence=shotDataAvailable||p.statsXg>0||p.statsShots>0||p.goals>0||p.assists>0;
-        // Parametri più permissivi, ma mai senza formazione e riscontri individuali:
-        // basta una presenza con evidenza statistica, purché il giocatore sia titolare.
+        // Requisiti minimi: formazione disponibile e almeno una presenza con dati individuali verificabili.
         const eligibleForBet=Boolean(lineupAvailable && isCurrentStarter && appearances>=1 && confidenceScore>=40 && hasRecentEvidence);
         return {...p,
           name:officialSource&&officialSource.name||p.name,
@@ -1216,7 +1231,7 @@ module.exports = async function handler(req, res) {
     if (!players.length && !lineupAvailable) diagnostics.push('Nessun profilo individuale recuperato e formazione attuale non disponibile: il provider non ha fornito una base verificabile per questa partita.');
     if (players.some(p=>p.appearances===0) && lineupAvailable) diagnostics.push('Alcuni titolari sono mostrati dalla formazione ma non hanno statistiche recenti: restano monitorabili e non sono idonei a proposte giocabili.');
     diagnostics.push('Precedenti diretti: '+h2hMatches.length+' partite trovate, '+h2hPlayerResults.filter(r=>(r.players||[]).length>0).length+' con statistiche individuali recuperabili.');
-    diagnostics.push('Copertura storico individuale: '+playerResults.filter(r=>(r.players||[]).length>0).length+'/'+playerResults.length+' partite con statistiche giocatori e '+playerResults.filter(r=>(r.shots||[]).length>0).length+'/'+playerResults.length+' con tiri/xG. Fonte: PitchAPI. Il modello combina rendimento recente, tiri/xG, attacco squadra, difesa avversaria, quote 1X2, vantaggio casa più marcato (coefficiente 1,14 contro 1,04 in trasferta) e precedenti diretti individuali. I bonus H2H sono limitati e applicati solo se i dati del giocatore sono disponibili; non sono probabilità calibrate. Quote 1X2 non sono quote del mercato marcatore. I titolari senza statistiche individuali recenti restano visibili come candidati da monitorare ma non sono idonei a proposte giocabili. I requisiti per i titolari con riscontri sono stati allentati a una presenza con evidenza statistica. I valori mancanti non vengono inventati; minuti stimati solo se il provider non li riporta.');
+    diagnostics.push('Copertura statistica stagione corrente (campionato): '+playerResults.filter(r=>(r.players||[]).length>0).length+'/'+playerResults.length+' partite con statistiche giocatori e '+playerResults.filter(r=>(r.shots||[]).length>0).length+'/'+playerResults.length+' con tiri/xG. Fonte: PitchAPI. I gol e gli assist individuali sono aggregati dalle partite concluse della stagione corrente nel campionato analizzato; i tiri/xG e i minuti sono ricavati dalle stesse gare. Il modello dà priorità assoluta al rendimento realizzativo individuale; attacco squadra, difesa avversaria, sede e altri contesti sono correttivi marginali. Le probabilità sono stime, non valori calibrati. I titolari senza statistiche individuali di stagione restano candidati da monitorare e non sono proposte giocabili. I minuti mancanti non vengono inventati.');
     const message = players.length
       ? 'Analisi dei giocatori di entrambe le squadre. Quote 1X2 '+(oddsAvailable?'disponibili come fattore informativo':'non disponibili; analisi comunque eseguita senza filtri quote')+'. '+(lineupConfirmed
           ? 'Formazione ufficiale pubblicata: sono mostrati i titolari ufficiali.'
@@ -1226,7 +1241,7 @@ module.exports = async function handler(req, res) {
       : 'Nessun giocatore con gol o assist rilevati nelle ultime partite concluse disponibili per questa gara. ' + diagnostics.join(' | ');
     // L'analisi non va memorizzata a lungo: rose e formazioni possono cambiare.
     res.setHeader('Cache-Control','no-store, max-age=0');
-    return res.status(200).json({message,diagnostics,oddsProviders:{theOddsApi:Boolean((process.env.ODDS_API_KEY||'').trim()),ukOddsApi:Boolean((process.env.UKODDS_API_KEY||'').trim()),sportsGameOdds:Boolean((process.env.SPORTSGAMEODDS_API_KEY||'').trim()),theRundown:Boolean((process.env.THERUNDOWN_API_KEY||'').trim()),ukPlayerMarketsAvailable:Boolean(ukOddsData?.playerMarketsAvailable)},matchOdds:{available:oddsAvailable,homeOdds,awayOdds,favorite:favoriteSide,bookmakersCount:matchOdds?.bookmakersCount||0,source:matchOdds?.oddsSource||''},headToHead:{matches:h2hMatches.length,playerStatsMatches:h2hPlayerResults.filter(r=>(r.players||[]).length>0).length,results:h2hMatches.map(m=>{const result=h2hPlayerResults.find(r=>String(r.match._matchId)===String(m._matchId));const scorerRows=(result&&result.players||[]).map(row=>({row,goals:getStat(row,'goals'),assists:getStat(row,'assists')})).filter(x=>x.goals>0);return {date:matchDateKey(m),home:m.home&&m.home.name||m.home_team&&m.home_team.name||'',away:m.away&&m.away.name||m.away_team&&m.away_team.name||'',scoreHome:m.score_home,scoreAway:m.score_away,playerStatsAvailable:Boolean(result&&(result.players||[]).length),scorers:scorerRows.map(x=>({name:x.row.player&&x.row.player.name||'Giocatore',team:String(x.row.team_id)===homeId?home.name:away.name,goals:x.goals,assists:x.assists}))};})},model:'poisson-shrunk-v4-expanded-candidates',weights:{goal:{recentGoals:9,xG:18,shots:12,shotsOnTarget:11,shotAccuracy:5,finishing:5,teamAttack:10,opponentDefense:12,homeAdvantage:5,minutes:6,matchOdds:2,headToHead:2,designatedPenaltyTaker:3},goalAssist:{goalContributions:12,xG:15,shots:9,shotsOnTarget:8,shotAccuracy:4,assists:14,chanceCreation:13,teamAttack:8,opponentDefense:10,homeAdvantage:3,minutes:2,matchOdds:1,headToHead:1}},teamContext:{home:teamForm.get(homeId),away:teamForm.get(awayId)},players:players.slice(0,40)});
+    return res.status(200).json({message,diagnostics,oddsProviders:{theOddsApi:Boolean((process.env.ODDS_API_KEY||'').trim()),ukOddsApi:Boolean((process.env.UKODDS_API_KEY||'').trim()),sportsGameOdds:Boolean((process.env.SPORTSGAMEODDS_API_KEY||'').trim()),theRundown:Boolean((process.env.THERUNDOWN_API_KEY||'').trim()),ukPlayerMarketsAvailable:Boolean(ukOddsData?.playerMarketsAvailable)},matchOdds:{available:oddsAvailable,homeOdds,awayOdds,favorite:favoriteSide,bookmakersCount:matchOdds?.bookmakersCount||0,source:matchOdds?.oddsSource||''},headToHead:{matches:h2hMatches.length,playerStatsMatches:h2hPlayerResults.filter(r=>(r.players||[]).length>0).length,results:h2hMatches.map(m=>{const result=h2hPlayerResults.find(r=>String(r.match._matchId)===String(m._matchId));const scorerRows=(result&&result.players||[]).map(row=>({row,goals:getStat(row,'goals'),assists:getStat(row,'assists')})).filter(x=>x.goals>0);return {date:matchDateKey(m),home:m.home&&m.home.name||m.home_team&&m.home_team.name||'',away:m.away&&m.away.name||m.away_team&&m.away_team.name||'',scoreHome:m.score_home,scoreAway:m.score_away,playerStatsAvailable:Boolean(result&&(result.players||[]).length),scorers:scorerRows.map(x=>({name:x.row.player&&x.row.player.name||'Giocatore',team:String(x.row.team_id)===homeId?home.name:away.name,goals:x.goals,assists:x.assists}))};})},model:'poisson-shrunk-v4-expanded-candidates',weights:{goal:{seasonGoals:40,goalFrequency:20,goalsPer90:15,xG:5,shots:5,shotsOnTarget:4,shotAccuracy:2,minutes:3,teamAttack:2,opponentDefense:2,homeAdvantage:1,penaltyTaker:1},goalAssist:{seasonGoals:28,seasonAssists:28,goalContributions:15,contributionsPer90:10,assistsPerAppearance:8,xG:3,chanceCreation:3,shots:2,teamAttack:1,opponentDefense:1,homeAdvantage:1,minutes:0,headToHead:0}},teamContext:{home:teamForm.get(homeId),away:teamForm.get(awayId)},players:players.slice(0,40)});
   } catch (error) {
     res.setHeader('Cache-Control','no-store, max-age=0');
     const status = error.status || 502;
