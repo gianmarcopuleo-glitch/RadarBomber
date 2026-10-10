@@ -653,8 +653,8 @@ module.exports = async function handler(req, res) {
       }
     }
     const targetMs = Date.parse(targetDate + 'T23:59:59Z');
-    const earliestMs = targetMs - 65 * 24 * 60 * 60 * 1000;
-    const recentFor = teamId => allMatches
+    const earliestMs = targetMs - 180 * 24 * 60 * 60 * 1000;
+    const recentFor = teamId => matchPool
       .filter(m => {
         const ids = [String(m.home_team && m.home_team.id || ''),String(m.away_team && m.away_team.id || '')];
         const status = normalize(m.status);
@@ -663,7 +663,7 @@ module.exports = async function handler(req, res) {
         return ids.includes(teamId) && m.id !== fixtureId && Number.isFinite(matchMs) && matchMs >= earliestMs && matchMs < targetMs && finished;
       })
       .sort((a,b) => String(b.date || '').localeCompare(String(a.date || '')))
-      .slice(0,8);
+      .slice(0,12);
     const homeRecent = recentFor(homeId);
     const awayRecent = recentFor(awayId);
     const gamesByTeam = new Map([[homeId,homeRecent.length],[awayId,awayRecent.length]]);
@@ -902,7 +902,7 @@ module.exports = async function handler(req, res) {
     if (homeRecent.length<5 || awayRecent.length<5) diagnostics.push('Campione recente incompleto: ultime gare trovate casa='+homeRecent.length+', ospite='+awayRecent.length+'.');
     if (!uniqueMatches.length) diagnostics.push('Non sono state trovate partite concluse recenti per entrambe le squadre nei campionati coperti.');
     diagnostics.push('Precedenti diretti: '+h2hMatches.length+' partite trovate, '+h2hPlayerResults.filter(r=>(r.players||[]).length>0).length+' con statistiche individuali recuperabili.');
-    diagnostics.push('Fonte: PitchAPI. Il modello combina rendimento recente, tiri/xG, attacco squadra, difesa avversaria, quote 1X2, vantaggio casa più marcato (coefficiente 1,14 contro 1,04 in trasferta) e precedenti diretti individuali. I bonus H2H sono limitati e applicati solo se i dati del giocatore sono disponibili; non sono probabilità calibrate. Quote 1X2 non sono quote del mercato marcatore. I profili senza statistiche individuali recenti vengono esclusi. I valori mancanti non vengono inventati; minuti stimati solo se il provider non li riporta.');
+    diagnostics.push('Copertura storico individuale: '+playerResults.filter(r=>(r.players||[]).length>0).length+'/'+playerResults.length+' partite con statistiche giocatori e '+playerResults.filter(r=>(r.shots||[]).length>0).length+'/'+playerResults.length+' con tiri/xG. Fonte: PitchAPI. Il modello combina rendimento recente, tiri/xG, attacco squadra, difesa avversaria, quote 1X2, vantaggio casa più marcato (coefficiente 1,14 contro 1,04 in trasferta) e precedenti diretti individuali. I bonus H2H sono limitati e applicati solo se i dati del giocatore sono disponibili; non sono probabilità calibrate. Quote 1X2 non sono quote del mercato marcatore. I profili senza statistiche individuali recenti vengono esclusi. I valori mancanti non vengono inventati; minuti stimati solo se il provider non li riporta.');
     const message = players.length
       ? 'Analisi dei giocatori della sola squadra favorita. Quote 1X2 '+(oddsAvailable?'disponibili come fattore informativo':'non disponibili; analisi comunque eseguita')+'. '+(lineupConfirmed
           ? 'Formazione ufficiale pubblicata: sono mostrati i titolari ufficiali.'
