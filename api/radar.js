@@ -465,13 +465,18 @@ async function sgoEvents() {
   return events;
 }
 function sgoEventTeams(event) {
-  const teams=Array.isArray(event.teams)?event.teams:[];
-  const home=event.homeTeam?.name||event.homeTeamName||event.home_team?.name||event.home_team||teams.find(t=>t.home===true||t.isHome===true)?.name||teams[0]?.name||'';
-  const away=event.awayTeam?.name||event.awayTeamName||event.away_team?.name||event.away_team||teams.find(t=>t.away===true||t.isAway===true)?.name||teams[1]?.name||'';
-  return {home:String(home||''),away:String(away||'')};
+  const teams=event.teams||{};
+  const homeId=event.homeTeamID||event.homeTeamId||event.home_team_id;
+  const awayId=event.awayTeamID||event.awayTeamId||event.away_team_id;
+  const lookup=id=>Array.isArray(teams)?teams.find(t=>String(t.teamID||t.teamId||t.id)===String(id)):teams[String(id)];
+  const homeTeam=lookup(homeId),awayTeam=lookup(awayId);
+  const list=Array.isArray(teams)?teams:Object.values(teams);
+  const home=event.homeTeam?.name||event.homeTeamName||event.home_team?.name||event.home_team||homeTeam?.name||homeTeam?.teamName||list.find(t=>t.home===true||t.isHome===true)?.name||list[0]?.name||'';
+  const away=event.awayTeam?.name||event.awayTeamName||event.away_team?.name||event.away_team||awayTeam?.name||awayTeam?.teamName||list.find(t=>t.away===true||t.isAway===true)?.name||list[1]?.name||'';
+  return {home:String(typeof home==='object'?(home.name||''):home||''),away:String(typeof away==='object'?(away.name||''):away||'')};
 }
 function sgoEventTime(event) {
-  return event.startTime||event.startDate||event.eventTime||event.eventDate||event.commenceTime||event.startsAt||event.date||'';
+  return event.startTime||event.startDate||event.eventTime||event.eventDate||event.commenceTime||event.startsAt||event.date||event.status?.startsAt||event.status?.startTime||event.info?.startsAt||event.info?.startTime||'';
 }
 function sgoFindEvent(fixture,events) {
   const home=fixture.home_team?.name||'',away=fixture.away_team?.name||'';
@@ -530,10 +535,12 @@ function sgoMatchOdds(event,fixture) {
     bestAwayOdds:ba?.odds??null,bestAwayBook:ba?.bookmaker||'',oddsSource:'SportsGameOdds'};
 }
 function sgoPlayerOdds(player,event) {
-  const allOdds=event?.odds||{},players=Array.isArray(event?.players)?event.players:Array.isArray(event?.participants)?event.participants:[];
+  const allOdds=event?.odds||{},rawPlayers=event?.players||event?.participants||{};
+  const players=Array.isArray(rawPlayers)?rawPlayers:Object.values(rawPlayers);
   const normalizedName=normalize(player.name||'');
-  const playerRecord=players.find(p=>normalize(p.name||p.playerName||'')===normalizedName);
-  const ids=new Set([playerRecord?.playerID,playerRecord?.playerId,playerRecord?.id,playerRecord?.statEntityID].filter(Boolean).map(String));
+  const playerRecord=players.find(p=>normalize(p.name||p.playerName||p.fullName||'')===normalizedName);
+  const ids=new Set([playerRecord?.playerID,playerRecord?.playerId,playerRecord?.id,playerRecord?.statEntityID,playerRecord?.playerKey].filter(Boolean).map(String));
+  if(playerRecord&&!ids.size){for(const [id,p] of Object.entries(rawPlayers))if(p===playerRecord)ids.add(String(id));}
   const goal=[],goalOrAssist=[];
   for(const [key,odd] of Object.entries(allOdds)){
     const stat=normalize(odd?.statID||odd?.statName||odd?.marketName||odd?.name||key);
@@ -557,9 +564,9 @@ const rundownCache=new Map();
 async function rundownEventsForFixture(fixture) {
   const key=(process.env.THERUNDOWN_API_KEY||'').trim();
   if(!key)return null;
-  const league=normalize(fixture.league?.name||'');
-  const sportId=/serie a/.test(league)?15:/premier league/.test(league)?11:/ligue 1/.test(league)?12:/bundesliga/.test(league)?13:/la liga/.test(league)?14:/champions league/.test(league)?16:/europa league/.test(league)?33:/mls/.test(league)?10:/international|world cup|euro/.test(league)?18:null;
-  if(!sportId)return null;
+  // TheRundown uses sport IDs, not league IDs, on this endpoint.
+  // Soccer is sport ID 3; filter the returned slate by the fixture's teams below.
+  const sportId=3;
   const fixtureDate=ukDate(fixture.time_utc||fixture.date||'');
   if(!fixtureDate)return null;
   const cacheKey=sportId+':'+fixtureDate;
