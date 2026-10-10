@@ -750,7 +750,7 @@ module.exports = async function handler(req, res) {
       return xt.length>0&&yt.length>0&&xt[xt.length-1]===yt[yt.length-1]&&xt[xt.length-1].length>=4;
     };
     const players = [...playersByKey.values()]
-      .filter(p=>{const lineupPosition=lineupPlayersById.get(String(p.id))?.positionId;const isGoalkeeper=p.position==='Portiere'||positionName(p.positionId)==='Portiere'||positionName(lineupPosition)==='Portiere';const hasRecentData=p.appearances>0||p.shots>0||p.statsShots>0||p.xg>0||p.statsXg>0||p.goals>0||p.assists>0;return (p.teamId===homeId||p.teamId===awayId)&&!isGoalkeeper&&hasRecentData;})
+      .filter(p=>{const lineupPosition=lineupPlayersById.get(String(p.id))?.positionId;const isGoalkeeper=p.position==='Portiere'||positionName(p.positionId)==='Portiere'||positionName(lineupPosition)==='Portiere';const hasRecentData=p.appearances>0||p.shots>0||p.statsShots>0||p.xg>0||p.statsXg>0||p.goals>0||p.assists>0;const inCurrentLineup=lineupPlayersById.has(String(p.id))||[...lineupPlayersById.values()].some(o=>o.teamId===p.teamId&&samePlayerName(o.name,p.name));return (p.teamId===homeId||p.teamId===awayId)&&!isGoalkeeper&&hasRecentData&&(!lineupAvailable||inCurrentLineup);})
       .map(p=>{
         const officialSource=lineupPlayersById.get(String(p.id)) || [...lineupPlayersById.values()].find(o=>o.teamId===p.teamId&&samePlayerName(o.name,p.name));
         const isCurrentStarter=Boolean(officialSource);
