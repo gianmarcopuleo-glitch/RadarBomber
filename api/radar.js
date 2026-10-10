@@ -1120,7 +1120,7 @@ module.exports = async function handler(req, res) {
           chanceCreation:rateScore(p.keyPasses/Math.max(1,p.appearances),2.5),
           teamAttack:rateScore(attackMetric,2.5),
           opponentDefense:rateScore(defenseMetric,2.2),
-          homeAdvantage:p.teamId===homeId?100:0,
+          homeAdvantage:p.teamId===homeId?100:35,
           minutes:rateScore(minutes/Math.max(1,p.appearances),90)
         };
         const teamOdds = p.teamId===homeId ? homeOdds : awayOdds;
