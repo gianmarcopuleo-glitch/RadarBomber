@@ -137,7 +137,7 @@ function showLiveFixtures(){
  const fixtures=window.liveFixtureDetails||[];
  livePlayersData=[];
  liveFixtureId=null;
- out.innerHTML=fixtures.length?fixtures.map(f=>'<article class="player" style="grid-template-columns:1fr auto"><div><div class="name">'+esc(f.home)+' – '+esc(f.away)+'</div><div class="team">'+esc(f.league)+' · '+esc(f.time||'Orario non disponibile')+' · '+esc(f.status||'In programma')+'</div><div class="tiny">Quote disattivate temporaneamente · analisi di entrambe le squadre+'</div></div><div><button data-fixture="'+esc(f.id)+'" onclick="loadLivePlayers(this.dataset.fixture)">Analizza partita</button></div></article>').join(''):'<div class="empty">Aggiorna il radar per caricare le partite.</div>';
+ out.innerHTML=fixtures.length?fixtures.map(f=>'<article class="player" style="grid-template-columns:1fr auto"><div><div class="name">'+esc(f.home)+' – '+esc(f.away)+'</div><div class="team">'+esc(f.league)+' · '+esc(f.time||'Orario non disponibile')+' · '+esc(f.status||'In programma')+'</div><div class="tiny">Quote disattivate temporaneamente · analisi di entrambe le squadre</div></div><div><button data-fixture="'+esc(f.id)+'" onclick="loadLivePlayers(this.dataset.fixture)">Analizza partita</button></div></article>').join(''):'<div class="empty">Aggiorna il radar per caricare le partite.</div>';
  status.textContent='Calendario: '+fixtures.length+' partite delle competizioni ammesse; filtro quote temporaneamente disattivato.';
 }
 function setLiveSort(mode){
