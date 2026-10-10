@@ -217,6 +217,9 @@ const oddsCache = new Map();
 // separata e poteva esaurire il limite API, facendo scartare tutte le gare.
 const oddsInFlight = new Map();
 const providerCache = new Map();
+// Evita richieste duplicate concorrenti allo stesso endpoint durante la scansione
+// di più partite; la cache semplice da sola non impedisce i duplicati in-flight.
+const providerInFlight = new Map();
 const h2hCache = new Map();
 const h2hPlayerCache = new Map();
 const historicalLeagueCache = new Map();
@@ -640,9 +643,26 @@ async function pitch(path) {
 async function pitchCached(path, ttlMs=10*60*1000) {
   const cached=providerCache.get(path);
   if(cached && Date.now()-cached.at<ttlMs) return cached.data;
-  const data=await pitch(path);
-  providerCache.set(path,{at:Date.now(),data});
-  return data;
+  if(providerInFlight.has(path)) return providerInFlight.get(path);
+  const request=pitch(path).then(data=>{
+    providerCache.set(path,{at:Date.now(),data});
+    return data;
+  }).finally(()=>providerInFlight.delete(path));
+  providerInFlight.set(path,request);
+  return request;
+}
+async function mapWithConcurrency(items, limit, worker) {
+  const output=new Array(items.length);
+  let next=0;
+  const count=Math.min(Math.max(1,limit),items.length);
+  await Promise.all(Array.from({length:count},async()=>{
+    while(true){
+      const index=next++;
+      if(index>=items.length)return;
+      output[index]=await worker(items[index],index);
+    }
+  }));
+  return output;
 }
 const dateOnly = d => d.toISOString().slice(0, 10);
 const seasonBefore = (season, offset) => {
@@ -968,13 +988,20 @@ module.exports = async function handler(req, res) {
     // Per i gol/assist usiamo tutte le partite concluse della stagione corrente
     // nelle competizioni coperte dal radar, non una finestra arbitraria di 12 gare.
     const uniqueMatches = [...new Map(seasonMatchesForTeams.map(m=>[String(m.id),m])).values()];
-    const playerResults = await Promise.all(uniqueMatches.map(async m => {
+    // Limitiamo le richieste contemporanee al provider: chiedere statistiche e
+    // tiri di ogni gara in un unico Promise.all poteva generare centinaia di
+    // chiamate simultanee durante una scansione di 30 partite e svuotare i dati.
+    const playerResults = await mapWithConcurrency(uniqueMatches,6,async m => {
       const [playerResponse, shotResponse] = await Promise.all([
-        pitchCached('/matches/' + encodeURIComponent(m.id) + '/players',24*60*60*1000).then(players => ({players:Array.isArray(players)?players:[]})).catch(error => ({players:[],error:error.message})),
-        pitchCached('/matches/' + encodeURIComponent(m.id) + '/shots',24*60*60*1000).then(shots => ({shots:Array.isArray(shots.periods)?shots.periods.flatMap(period=>Array.isArray(period.shots)?period.shots:[]):[]})).catch(error => ({shots:[],shotError:error.message}))
+        pitchCached('/matches/' + encodeURIComponent(m.id) + '/players',24*60*60*1000)
+          .then(data => ({players:Array.isArray(data)?data:(Array.isArray(data.players)?data.players:[])}))
+          .catch(error => ({players:[],error:error.message})),
+        pitchCached('/matches/' + encodeURIComponent(m.id) + '/shots',24*60*60*1000)
+          .then(data => ({shots:Array.isArray(data.periods)?data.periods.flatMap(period=>Array.isArray(period.shots)?period.shots:[]):[]}))
+          .catch(error => ({shots:[],shotError:error.message}))
       ]);
       return {match:m,players:playerResponse.players,error:playerResponse.error,shots:shotResponse.shots,shotError:shotResponse.shotError};
-    }));
+    });
 
     const teamForm = new Map([[homeId,{games:0,goalsFor:0,goalsAgainst:0,shotsFor:0,shotsAgainst:0,xgFor:0,xgAgainst:0,shotMatches:0,xgMatches:0}],
       [awayId,{games:0,goalsFor:0,goalsAgainst:0,shotsFor:0,shotsAgainst:0,xgFor:0,xgAgainst:0,shotMatches:0,xgMatches:0}]]);
