@@ -956,16 +956,17 @@ module.exports = async function handler(req, res) {
     const awayRecent = recentFor(awayId);
     const gamesByTeam = new Map([[homeId,homeRecent.length],[awayId,awayRecent.length]]);
     const fixtureLeagueId=String(fixture.league&&fixture.league.id||'');
+    const currentSeasonLabel=String(allMatches.find(m=>String(m._leagueId||'')===fixtureLeagueId)?._season||'');
     const seasonMatchesForTeams=matchPool.filter(m=>{
       const ids=matchTeams(m);
       const matchMs=Date.parse(String(m.time_utc||m.date||''));
       const status=normalize(m.status);
       const finished=status==='finished'||status==='complete'||status==='completed'||(m.score_home!=null&&m.score_away!=null);
-      const belongsToFixtureLeague=String(m._leagueId||m.league&&m.league.id||'')===fixtureLeagueId;
-      return belongsToFixtureLeague && (ids.home===homeId||ids.away===homeId||ids.home===awayId||ids.away===awayId) && String(m.id)!==fixtureId && Number.isFinite(matchMs) && matchMs<targetMs && finished;
+      const belongsToCurrentSeason=!!currentSeasonLabel && String(m._season||'')===currentSeasonLabel;
+      return belongsToCurrentSeason && (ids.home===homeId||ids.away===homeId||ids.home===awayId||ids.away===awayId) && String(m.id)!==fixtureId && Number.isFinite(matchMs) && matchMs<targetMs && finished;
     });
     // Per i gol/assist usiamo tutte le partite concluse della stagione corrente
-    // nel campionato della gara analizzata, non una finestra arbitraria di 12 gare.
+    // nelle competizioni coperte dal radar, non una finestra arbitraria di 12 gare.
     const uniqueMatches = [...new Map(seasonMatchesForTeams.map(m=>[String(m.id),m])).values()];
     const playerResults = await Promise.all(uniqueMatches.map(async m => {
       const [playerResponse, shotResponse] = await Promise.all([
@@ -1010,7 +1011,7 @@ module.exports = async function handler(req, res) {
         if(!playersByKey.has(key))playersByKey.set(key,{
           id:String(player.id),name:player.name,team:teamId===homeId?home.name:away.name,teamId,
           position:positionName(player.position_id),goals:0,assists:0,appearances:0,minutes:0,
-          statsShots:0,statsShotsOnTarget:0,statsXg:0,shots:0,shotsOnTarget:0,xg:0,keyPasses:0,statsSeason:'stagione corrente (campionato)',
+          statsShots:0,statsShotsOnTarget:0,statsXg:0,shots:0,shotsOnTarget:0,xg:0,keyPasses:0,statsSeason:'stagione corrente (competizioni coperte)',
           source:'PitchAPI player stats + shots/xG',starter:false,lineupKnown:false,lineupConfirmed:false,lineupType:'',injured:false,
           _appearanceMatches:new Set(),_shotMatches:new Set()
         });
@@ -1231,7 +1232,7 @@ module.exports = async function handler(req, res) {
     if (!players.length && !lineupAvailable) diagnostics.push('Nessun profilo individuale recuperato e formazione attuale non disponibile: il provider non ha fornito una base verificabile per questa partita.');
     if (players.some(p=>p.appearances===0) && lineupAvailable) diagnostics.push('Alcuni titolari sono mostrati dalla formazione ma non hanno statistiche recenti: restano monitorabili e non sono idonei a proposte giocabili.');
     diagnostics.push('Precedenti diretti: '+h2hMatches.length+' partite trovate, '+h2hPlayerResults.filter(r=>(r.players||[]).length>0).length+' con statistiche individuali recuperabili.');
-    diagnostics.push('Copertura statistica stagione corrente (campionato): '+playerResults.filter(r=>(r.players||[]).length>0).length+'/'+playerResults.length+' partite con statistiche giocatori e '+playerResults.filter(r=>(r.shots||[]).length>0).length+'/'+playerResults.length+' con tiri/xG. Fonte: PitchAPI. I gol e gli assist individuali sono aggregati dalle partite concluse della stagione corrente nel campionato analizzato; i tiri/xG e i minuti sono ricavati dalle stesse gare. Il modello dà priorità assoluta al rendimento realizzativo individuale; attacco squadra, difesa avversaria, sede, quote 1X2 e precedenti sono correttivi marginali, con impatto limitato anche sulle probabilità. Le probabilità sono stime, non valori calibrati. I titolari senza statistiche individuali di stagione restano candidati da monitorare e non sono proposte giocabili. I minuti mancanti non vengono inventati.');
+    diagnostics.push('Copertura statistica stagione corrente (competizioni coperte): '+playerResults.filter(r=>(r.players||[]).length>0).length+'/'+playerResults.length+' partite con statistiche giocatori e '+playerResults.filter(r=>(r.shots||[]).length>0).length+'/'+playerResults.length+' con tiri/xG. Fonte: PitchAPI. I gol e gli assist individuali sono aggregati dalle partite concluse della stagione corrente nelle competizioni coperte dal radar; i tiri/xG e i minuti sono ricavati dalle stesse gare. Il modello dà priorità assoluta al rendimento realizzativo individuale; attacco squadra, difesa avversaria, sede, quote 1X2 e precedenti sono correttivi marginali, con impatto limitato anche sulle probabilità. Le probabilità sono stime, non valori calibrati. I titolari senza statistiche individuali di stagione restano candidati da monitorare e non sono proposte giocabili. I minuti mancanti non vengono inventati.');
     const message = players.length
       ? 'Analisi dei giocatori di entrambe le squadre. Quote 1X2 '+(oddsAvailable?'disponibili come fattore informativo':'non disponibili; analisi comunque eseguita senza filtri quote')+'. '+(lineupConfirmed
           ? 'Formazione ufficiale pubblicata: sono mostrati i titolari ufficiali.'
