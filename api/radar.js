@@ -999,7 +999,7 @@ module.exports = async function handler(req, res) {
         if(!playersByKey.has(key))playersByKey.set(key,{
           id:String(player.id),name:player.name,team:teamId===homeId?home.name:away.name,teamId,
           position:positionName(player.position_id),goals:0,assists:0,appearances:0,minutes:0,
-          statsShots:0,statsShotsOnTarget:0,statsXg:0,shots:0,shotsOnTarget:0,xg:0,keyPasses:0,statsSeason:'ultime 5 partite concluse',
+          statsShots:0,statsShotsOnTarget:0,statsXg:0,shots:0,shotsOnTarget:0,xg:0,keyPasses:0,statsSeason:'ultime 12 partite concluse',
           source:'PitchAPI player stats + shots/xG',starter:false,lineupKnown:false,lineupConfirmed:false,lineupType:'',injured:false,
           _appearanceMatches:new Set(),_shotMatches:new Set()
         });
@@ -1021,7 +1021,7 @@ module.exports = async function handler(req, res) {
         if(!playersByKey.has(key))playersByKey.set(key,{
           id:String(player.id),name:player.name||'Giocatore',team:teamId===homeId?home.name:away.name,teamId,
           position:positionName(player.position_id),goals:0,assists:0,appearances:0,minutes:0,
-          statsShots:0,statsShotsOnTarget:0,statsXg:0,shots:0,shotsOnTarget:0,xg:0,keyPasses:0,statsSeason:'ultime 5 partite concluse',
+          statsShots:0,statsShotsOnTarget:0,statsXg:0,shots:0,shotsOnTarget:0,xg:0,keyPasses:0,statsSeason:'ultime 12 partite concluse',
           source:'PitchAPI shots + xG',starter:false,lineupKnown:false,lineupConfirmed:false,lineupType:'',injured:false,
           _appearanceMatches:new Set(),_shotMatches:new Set()
         });
