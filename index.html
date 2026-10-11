@@ -119,5 +119,8 @@ function renderLivePlayers(){
  document.getElementById('livePlayers').innerHTML=list.length?list.map(p=>'<article class="player"><div><div class="name">'+esc(p.name)+'</div><div class="team">'+esc(p.team)+' · '+esc(p.position||'Ruolo non specificato')+'</div><div class="tiny">'+esc(p.fixture)+' · '+esc(p.league)+' · '+esc(p.time||'')+'</div><div class="tiny">'+p.goals+' gol, '+p.assists+' assist in '+p.appearances+' presenze · '+p.goalsPer90+' gol/partita · '+p.assistsPer90+' assist/partita · dati stagionali BSD</div><div class="tiny">Minuti, tiri e titolari ufficiali non disponibili in questo riepilogo.</div></div><div><div class="tiny">Indice gol</div><div class="metric"><div class="bar"><i style="width:'+p.goalIndex+'%"></i></div><span class="score">'+p.goalIndex+'/100</span></div></div><div><div class="tiny">Indice gol + assist</div><div class="metric"><div class="bar cyan"><i style="width:'+p.gaIndex+'%"></i></div><span class="score">'+p.gaIndex+'/100</span></div></div><div class="last"><span class="pill">'+(p.lineupKnown?'TITOLARE UFFICIALE':p.startRate>=65?'PROBABILE TITOLARE':'CANDIDATO')+'</span></div></article>').join(''):'<div class="empty">Nessun giocatore individuato con indice ≥ 70. Controlla la diagnostica nel messaggio qui sopra: non inserire dati manualmente, serve risolvere il caricamento automatico.</div>';
 }
 render();
-document.getElementById('loadFixtures').click();
+// Wire the automatic radar controls explicitly: without these handlers the page stays on the initial loading message forever.
+document.getElementById('loadFixtures').addEventListener('click', loadAutomaticRadar);
+liveDate.addEventListener('change', loadAutomaticRadar);
+loadAutomaticRadar();
 </script></body></html>
