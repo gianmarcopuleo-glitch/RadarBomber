@@ -1114,7 +1114,7 @@ module.exports = async function handler(req, res) {
       return xt.length>0&&yt.length>0&&xt[xt.length-1]===yt[yt.length-1]&&xt[xt.length-1].length>=4;
     };
     const players = [...playersByKey.values()]
-      .filter(p=>{const lineupPosition=lineupPlayersById.get(String(p.id))?.positionId;const isGoalkeeper=p.position==='Portiere'||positionName(p.positionId)==='Portiere'||positionName(lineupPosition)==='Portiere';const isDefender=p.position==='Difensore'||positionName(p.positionId)==='Difensore'||positionName(lineupPosition)==='Difensore';const hasRecentData=p.appearances>0||p.shots>0||p.statsShots>0||p.xg>0||p.statsXg>0||p.goals>0||p.assists>0;const inCurrentLineup=lineupPlayersById.has(String(p.id))||[...lineupPlayersById.values()].some(o=>o.teamId===p.teamId&&samePlayerName(o.name,p.name));const hasTrustedSource=hasRecentData||(lineupAvailable&&inCurrentLineup);return (p.teamId===homeId||p.teamId===awayId)&&!isGoalkeeper&&!isDefender&&hasTrustedSource&&(!lineupAvailable||inCurrentLineup);})
+      .filter(p=>{const officialPosition=lineupPlayersById.get(String(p.id))||[...lineupPlayersById.values()].find(o=>o.teamId===p.teamId&&samePlayerName(o.name,p.name));const position=p.position||positionName(p.positionId)||positionName(officialPosition?.positionId);const eligibleRole=position==='Attaccante'||position==='Centrocampista';const hasRecentData=p.appearances>0||p.shots>0||p.statsShots>0||p.xg>0||p.statsXg>0||p.goals>0||p.assists>0;const inCurrentLineup=Boolean(officialPosition);const hasTrustedSource=hasRecentData||(lineupAvailable&&inCurrentLineup);return (p.teamId===homeId||p.teamId===awayId)&&eligibleRole&&hasTrustedSource&&(!lineupAvailable||inCurrentLineup);})
       .map(p=>{
         const officialSource=lineupPlayersById.get(String(p.id)) || [...lineupPlayersById.values()].find(o=>o.teamId===p.teamId&&samePlayerName(o.name,p.name));
         const isCurrentStarter=Boolean(officialSource);
@@ -1192,14 +1192,14 @@ module.exports = async function handler(req, res) {
         const penaltyTaker=designatedPenaltyTaker(p);
         const penaltyTakerScore=penaltyTaker===true?100:penaltyTaker===false?0:50;
         const goalIndex=weighted([
-          // 100 punti: 80% deriva da gol stagionali, media gol/presenza e gol per 90'.
+          // 100 punti: gol stagionali, frequenza realizzativa e gol per 90' pesano il 75%.
           [goalComponents.seasonGoals,30],[goalComponents.goalFrequency,30],[goalComponents.goalsPer90,15],
           [goalComponents.expectedGoals,5],[goalComponents.shotVolume,4],[goalComponents.shotsOnTarget,3],
           [goalComponents.shotAccuracy,2],[goalComponents.minutes,2],[goalComponents.teamAttack,3],
           [goalComponents.opponentDefense,3],[goalComponents.teamOdds,2],[goalComponents.homeAdvantage,1]
         ]);
         const gaIndex=weighted([
-          // 100 punti: gol e assist stagionali + frequenza dei contributi realizzativi valgono l'85%.
+          // 100 punti: gol, assist e frequenza dei contributi realizzativi valgono il 90%.
           [gaComponents.seasonGoals,25],[gaComponents.seasonAssists,25],[gaComponents.goalContributions,25],
           [gaComponents.contributionsPer90,10],[gaComponents.assistsPerAppearance,5],[gaComponents.expectedGoals,2],
           [gaComponents.chanceCreation,1],[gaComponents.shotVolume,1],[gaComponents.teamAttack,2],
