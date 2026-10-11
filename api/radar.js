@@ -7,7 +7,7 @@ const LEAGUES=new Set([
   61,66, // Ligue 1, Coupe de France
   135,137, // Serie A, Coppa Italia
   2,3,848, // Champions, Europa, Conference League
-  5,1,4,32,13 // Nations League, World Cup, Euro, European WC qualifiers, Copa Libertadores
+  5,1,4,960,29,30,31,32,33,34,13,9 // Nations League, World Cup, Euro and World Cup qualifiers, Copa Libertadores, Copa America
 ]);
 const api=async path=>{
  const key=process.env.API_FOOTBALL_KEY;
