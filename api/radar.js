@@ -31,8 +31,8 @@ function rank(row,oppConceded,teamScored){
  const defense=clamp(1.12-Math.max(0,oppConceded)*0.025,0.78,1.12);
  const startsFactor=clamp(0.7+startRate*0.3,0.7,1);
  // Comparative 0-100 indexes, not calibrated real-world probabilities.
- const goalIndex=clamp(Math.round(100*(1-Math.exp(-((g90*2.1)+(gApp*1.35)+(onTargetRate*0.07)+(penRate*0.25))*attack*defense*startsFactor)),0,99);
- const gaIndex=clamp(Math.round(100*(1-Math.exp(-((g90*1.2)+(a90*1.7)+(gaApp*1.05)+(shotRate*0.035))*attack*defense*startsFactor)),0,99);
+ const goalIndex=clamp(Math.round(100*(1-Math.exp(-((g90*2.1)+(gApp*1.35)+(onTargetRate*0.07)+(penRate*0.25))*attack*defense*startsFactor))),0,99);
+ const gaIndex=clamp(Math.round(100*(1-Math.exp(-((g90*1.2)+(a90*1.7)+(gaApp*1.05)+(shotRate*0.035))*attack*defense*startsFactor))),0,99);
  return {id:p.id,name:p.name,position:gm.position||'',goals,assists,minutes,appearances:apps,starts,avgMinutes:Math.round(avgMinutes),startRate:Math.round(startRate*100),goalsPer90:+g90.toFixed(2),assistsPer90:+a90.toFixed(2),goalsPerAppearance:+gApp.toFixed(2),goalIndex,gaIndex,shots:n(shots.total),shotsOnTarget:n(shots.on)};
 }
 async function analyzeFixture(f){
