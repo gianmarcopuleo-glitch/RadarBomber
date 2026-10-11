@@ -1,94 +1,176 @@
-// RadarBomber automatic daily radar: only requested major competitions, all qualifying fixtures.
-const BASE='https://v3.football.api-sports.io';
-const LEAGUES=new Set([
-  39,45,48, // Premier League, FA Cup, EFL Cup
-  140,143, // La Liga, Copa del Rey
-  78,81, // Bundesliga, DFB-Pokal
-  61,66, // Ligue 1, Coupe de France
-  135,137, // Serie A, Coppa Italia
-  2,3,848, // Champions, Europa, Conference League
-  5,1,4,960,29,30,31,32,33,34,13,9 // Nations League, World Cup, Euro and World Cup qualifiers, Copa Libertadores, Copa America
-]);
-const api=async path=>{
- const key=process.env.API_FOOTBALL_KEY;
- if(!key){const e=new Error('Chiave API non configurata');e.status=503;throw e;}
- const r=await fetch(BASE+path,{headers:{'x-apisports-key':key},signal:AbortSignal.timeout(10000)});
- const j=await r.json();
- if(!r.ok||(j.errors&&Object.keys(j.errors).length)){const e=new Error('API-Football: '+JSON.stringify(j.errors||r.status));e.status=r.status||502;throw e;}
- return j.response||[];
-};
-const safe=async(path,fallback)=>{try{return await api(path)}catch(_){return fallback}};
-const n=v=>Number(v||0), clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-function rank(row,oppConceded,teamScored){
- const p=row.player||{},s=(row.statistics||[])[0]||{},g=s.goals||{},gm=s.games||{},shots=s.shots||{},pen=s.penalty||{};
- const goals=n(g.total),assists=n(g.assists),minutes=n(gm.minutes),apps=n(gm.appearences),starts=n(gm.lineups),position=String(gm.position||'').toLowerCase();
- if(!p.name||minutes<180||apps<3||/goalkeeper|defender/.test(position))return null;
- const startRate=starts/Math.max(apps,1),avgMinutes=minutes/Math.max(apps,1);
- if(avgMinutes<45||startRate<0.35)return null;
- const g90=goals/(minutes/90),a90=assists/(minutes/90),gApp=goals/apps,gaApp=(goals+assists)/apps;
- const shotRate=n(shots.total)/(minutes/90),onTargetRate=n(shots.on)/(minutes/90),penRate=n(pen.scored)/apps;
- const attack=clamp(0.9+teamScored/Math.max(apps,1)*0.06,0.82,1.12);
- const defense=clamp(1.12-Math.max(0,oppConceded)*0.025,0.78,1.12);
- const startsFactor=clamp(0.7+startRate*0.3,0.7,1);
- // Comparative 0-100 indexes, not calibrated real-world probabilities.
- const goalIndex=clamp(Math.round(100*(1-Math.exp(-((g90*2.1)+(gApp*1.35)+(onTargetRate*0.07)+(penRate*0.25))*attack*defense*startsFactor))),0,99);
- const gaIndex=clamp(Math.round(100*(1-Math.exp(-((g90*1.2)+(a90*1.7)+(gaApp*1.05)+(shotRate*0.035))*attack*defense*startsFactor))),0,99);
- return {id:p.id,name:p.name,position:gm.position||'',goals,assists,minutes,appearances:apps,starts,avgMinutes:Math.round(avgMinutes),startRate:Math.round(startRate*100),goalsPer90:+g90.toFixed(2),assistsPer90:+a90.toFixed(2),goalsPerAppearance:+gApp.toFixed(2),goalIndex,gaIndex,shots:n(shots.total),shotsOnTarget:n(shots.on)};
+// RadarBomber BSD integration. Scores are comparative indexes, not calibrated probabilities.
+const BASE = 'https://sports.bzzoiro.com/api/v2';
+const allowed = [
+  ['premier league', ['premier league']],
+  ['fa cup', ['fa cup']],
+  ['efl cup', ['efl cup', 'league cup']],
+  ['la liga', ['la liga', 'primera division']],
+  ['copa del rey', ['copa del rey']],
+  ['bundesliga', ['bundesliga']],
+  ['dfb-pokal', ['dfb-pokal', 'dfb pokal']],
+  ['ligue 1', ['ligue 1']],
+  ['coupe de france', ['coupe de france']],
+  ['serie a', ['serie a']],
+  ['coppa italia', ['coppa italia']],
+  ['champions league', ['champions league']],
+  ['europa league', ['europa league']],
+  ['conference league', ['conference league']],
+  ['nations league', ['nations league']],
+  ['world cup', ['world cup', 'fifa world cup']],
+  ['european championship', ['european championship', 'uefa euro']],
+  ['world cup qualifiers', ['world cup qualification', 'world cup qualifiers', 'wc qualification']],
+  ['copa libertadores', ['copa libertadores']],
+  ['copa america', ['copa america']]
+];
+const norm = v => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+function selectedLeague(name) {
+  const n = norm(name);
+  return allowed.some(([_, aliases]) => aliases.some(a => n === norm(a) || n.includes(norm(a))));
 }
-async function analyzeFixture(f){
- const id=f.fixture.id,season=Number(f.league?.season||String(f.fixture.date).slice(0,4));
- const [lineups,injuries,homeRows,awayRows,homeStats,awayStats]=await Promise.all([
-  safe('/fixtures/lineups?fixture='+id,[]),safe('/injuries?fixture='+id,[]),
-  api('/players?team='+f.teams.home.id+'&season='+season+'&league='+f.league.id+'&page=1'),
-  api('/players?team='+f.teams.away.id+'&season='+season+'&league='+f.league.id+'&page=1'),
-  safe('/teams/statistics?league='+f.league.id+'&season='+season+'&team='+f.teams.home.id,{}),
-  safe('/teams/statistics?league='+f.league.id+'&season='+season+'&team='+f.teams.away.id,{})
- ]);
- const lineupKnown=lineups.length>=2&&lineups.every(t=>Array.isArray(t.startXI)&&t.startXI.length>0);
- const starters=new Set(lineups.flatMap(t=>(t.startXI||[]).map(x=>String(x.player?.id))));
- const injured=new Set(injuries.map(x=>String(x.player?.id)));
- const homeScored=n(homeStats.goals?.for?.total?.total),awayScored=n(awayStats.goals?.for?.total?.total);
- const homeConceded=n(homeStats.goals?.against?.total?.total),awayConceded=n(awayStats.goals?.against?.total?.total);
- const fixture={id,home:f.teams.home.name,away:f.teams.away.name,league:f.league.name,leagueId:f.league.id,time:f.fixture.date?new Date(f.fixture.date).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Rome'}):''};
- const players=[];
- for(const side of [
-  {name:f.teams.home.name,teamId:f.teams.home.id,rows:homeRows,oppConceded:awayConceded,teamScored:homeScored},
-  {name:f.teams.away.name,teamId:f.teams.away.id,rows:awayRows,oppConceded:homeConceded,teamScored:awayScored}
- ]){
-  for(const row of side.rows){
-   const pid=String(row.player?.id||'');
-   if(injured.has(pid)||(lineupKnown&&!starters.has(pid)))continue;
-   const p=rank(row,side.oppConceded,side.teamScored);if(!p)continue;
-   players.push({...p,team:side.name,teamId:side.teamId,fixtureId:id,fixture:fixture.home+' - '+fixture.away,league:fixture.league,time:fixture.time,starter:lineupKnown?starters.has(pid):p.startRate>=65,lineupKnown,opponentConceded:side.oppConceded,teamGoals:side.teamScored});
+async function bsd(path) {
+  const key = process.env.BSD_API_KEY;
+  if (!key) { const e = new Error('Manca BSD_API_KEY nelle Environment Variables di Vercel.'); e.status = 503; throw e; }
+  const r = await fetch(BASE + path, {
+    headers: { Authorization: 'Token ' + key },
+    signal: AbortSignal.timeout(12000)
+  });
+  const body = await r.json();
+  if (!r.ok) {
+    const detail = body && (body.detail || body.error || body.message);
+    const e = new Error('BSD HTTP ' + r.status + (detail ? ': ' + String(detail).slice(0, 180) : ''));
+    e.status = r.status;
+    throw e;
   }
- }
- return {fixture,lineupKnown,players};
+  return Array.isArray(body) ? body : (Array.isArray(body.results) ? body.results : []);
 }
-async function pool(items,limit,fn){
- const out=new Array(items.length);let next=0;
- await Promise.all(Array.from({length:Math.min(limit,items.length)},async()=>{while(true){const i=next++;if(i>=items.length)return;try{out[i]=await fn(items[i])}catch(e){out[i]={error:e.message,fixture:{id:items[i].fixture.id,home:items[i].teams.home.name,away:items[i].teams.away.name,league:items[i].league.name},players:[]}}}}));
- return out;
+const num = v => Number.isFinite(Number(v)) ? Number(v) : 0;
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+function pick(obj, ...keys) { for (const k of keys) if (obj && obj[k] != null) return obj[k]; return null; }
+function eventShape(e) {
+  const homeObj = e.home_team || e.homeTeam || {};
+  const awayObj = e.away_team || e.awayTeam || {};
+  const leagueObj = e.league || e.competition || {};
+  const date = pick(e, 'event_date', 'date', 'kickoff', 'start_time');
+  return {
+    id: pick(e, 'id', 'event_id'),
+    date,
+    status: norm(pick(e, 'status', 'status_name') || 'upcoming'),
+    homeId: pick(e, 'home_team_id') ?? pick(homeObj, 'id', 'team_id'),
+    awayId: pick(e, 'away_team_id') ?? pick(awayObj, 'id', 'team_id'),
+    home: pick(e, 'home_team_name', 'home', 'home_name') ?? pick(homeObj, 'name', 'team_name') ?? (typeof e.home_team === 'string' ? e.home_team : null),
+    away: pick(e, 'away_team_name', 'away', 'away_name') ?? pick(awayObj, 'name', 'team_name') ?? (typeof e.away_team === 'string' ? e.away_team : null),
+    leagueId: pick(e, 'league_id', 'competition_id') ?? pick(leagueObj, 'id', 'league_id'),
+    league: pick(e, 'league_name', 'competition_name') ?? pick(leagueObj, 'name', 'league_name') ?? (typeof e.league === 'string' ? e.league : null)
+  };
 }
-module.exports=async function handler(req,res){
- res.setHeader('Cache-Control','s-maxage=300, stale-while-revalidate=300');
- try{
-  const date=String(req.query.date||new Date().toLocaleDateString('en-CA',{timeZone:'Europe/Rome'}));
-  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)){res.status(400).json({error:'Data non valida'});return;}
-  const fixtures=await api('/fixtures?date='+date+'&timezone=Europe%2FRome');
-  const selected=fixtures.filter(f=>LEAGUES.has(Number(f.league?.id))&&['NS','TBD'].includes(String(f.fixture?.status?.short||'NS')));
-  const brief=selected.map(f=>({id:f.fixture.id,home:f.teams.home.name,away:f.teams.away.name,league:f.league.name,leagueId:f.league.id,time:f.fixture.date?new Date(f.fixture.date).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Rome'}):''}));
-  if(req.query.mode!=='auto'){
-   res.status(200).json({date,count:selected.length,fixtures:brief});return;
+function toRomeTime(date) {
+  if (!date) return '';
+  const d = new Date(date);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString('it-IT', {hour:'2-digit', minute:'2-digit', timeZone:'Europe/Rome'});
+}
+function leaderboardRows(rows) {
+  const map = new Map();
+  for (const r of rows) {
+    const id = String(pick(r, 'player_id', 'id') ?? '');
+    if (!id) continue;
+    const prev = map.get(id) || {
+      id, name: pick(r, 'player_name', 'name') || 'Giocatore',
+      position: pick(r, 'position', 'position_name') || '',
+      teamId: pick(r, 'team_id') ?? pick(r.team, 'id'),
+      team: pick(r, 'team_name') ?? pick(r.team, 'name') ?? '',
+      goals: 0, assists: 0, goalMatches: 0, assistMatches: 0
+    };
+    map.set(id, prev);
   }
-  // Automatic analysis of all qualifying fixtures; aim for up to 30 matches per day.
-  const batch=selected.slice(0,30);
-  const analyzed=await pool(batch,3,analyzeFixture);
-  const players=analyzed.flatMap(x=>x?.players||[]);
-  players.sort((a,b)=>Math.max(b.goalIndex,b.gaIndex)-Math.max(a.goalIndex,a.gaIndex));
-  const failedCount=analyzed.filter(x=>x?.error).length;
-  const hasRateLimit=analyzed.some(x=>String(x?.error||'').includes('rateLimit'));
-  const hasSeasonLimit=analyzed.some(x=>String(x?.error||'').includes('plan')&&String(x?.error||'').includes('season'));
-  const message=failedCount===0?'Analisi automatica completata. I punteggi sono indici comparativi, non probabilità reali.':hasRateLimit?'Analisi parziale: API-Football ha imposto il limite di richieste al minuto. Riprova più tardi; le partite fallite non sono state valutate.':hasSeasonLimit?'Analisi parziale: il piano API-Football gratuito non consente le statistiche della stagione corrente. Non vengono sostituite con statistiche vecchie presentate come attuali.':'Analisi parziale: alcune partite non hanno potuto essere analizzate.';
-  res.status(200).json({date,fixtureCount:selected.length,analyzedCount:batch.length,failedCount,errors:analyzed.filter(x=>x?.error).slice(0,5).map(x=>({fixture:x.fixture?.home+' - '+x.fixture?.away,error:x.error})),players,fixtures:brief,message});
- }catch(e){res.status(e.status||502).json({error:e.status===503?'Manca API_FOOTBALL_KEY nelle Environment Variables di Vercel.':e.message||'Errore temporaneo del provider'});}
+  return map;
+}
+async function leagueLeaders(leagueId) {
+  const [scorers, assists] = await Promise.all([
+    bsd('/leagues/' + encodeURIComponent(leagueId) + '/top/scorers/?limit=50'),
+    bsd('/leagues/' + encodeURIComponent(leagueId) + '/top/assists/?limit=50')
+  ]);
+  const map = leaderboardRows(scorers);
+  for (const [id, p] of leaderboardRows(assists)) if (!map.has(id)) map.set(id, p);
+  for (const r of scorers) {
+    const id = String(pick(r, 'player_id', 'id') ?? ''), p = map.get(id);
+    if (p) { p.goals = num(r.value ?? r.goals); p.goalMatches = num(r.matches ?? r.appearances); p.position = p.position || pick(r, 'position') || ''; p.teamId = p.teamId ?? r.team_id; p.team = p.team || r.team_name || ''; }
+  }
+  for (const r of assists) {
+    const id = String(pick(r, 'player_id', 'id') ?? ''), p = map.get(id);
+    if (p) { p.assists = num(r.value ?? r.assists); p.assistMatches = num(r.matches ?? r.appearances); p.position = p.position || pick(r, 'position') || ''; p.teamId = p.teamId ?? r.team_id; p.team = p.team || r.team_name || ''; }
+  }
+  return [...map.values()];
+}
+function scorePlayer(p, fixture) {
+  const position = String(p.position || '').toLowerCase();
+  if (/goalkeeper|\bkeeper\b|^g$|defender|\bdefence\b|^d$/.test(position)) return null;
+  const apps = Math.max(p.goalMatches, p.assistMatches);
+  if (!p.name || apps < 3) return null;
+  const goalsPerApp = p.goals / Math.max(p.goalMatches || apps, 1);
+  const assistsPerApp = p.assists / Math.max(p.assistMatches || apps, 1);
+  const gaPerApp = (p.goals + p.assists) / apps;
+  const goalIndex = clamp(Math.round(100 * (1 - Math.exp(-goalsPerApp * 1.25))), 0, 99);
+  const gaIndex = clamp(Math.round(100 * (1 - Math.exp(-gaPerApp * 0.85))), 0, 99);
+  return {
+    id: String(p.id), name: p.name, position: p.position || 'Ruolo non specificato',
+    goals: p.goals, assists: p.assists, minutes: 0, appearances: apps, starts: 0,
+    avgMinutes: 0, startRate: 0, goalsPer90: +goalsPerApp.toFixed(2),
+    assistsPer90: +assistsPerApp.toFixed(2), goalsPerAppearance: +goalsPerApp.toFixed(2),
+    goalIndex, gaIndex, shots: 0, shotsOnTarget: 0,
+    team: fixture.teamName, teamId: fixture.teamId, fixtureId: fixture.id,
+    fixture: fixture.home + ' - ' + fixture.away, league: fixture.league,
+    time: fixture.time, starter: false, lineupKnown: false,
+    opponentConceded: null, teamGoals: null,
+    statsSource: 'BSD leaderboard', statsLimited: true
+  };
+}
+module.exports = async function handler(req, res) {
+  res.setHeader('Cache-Control', 's-maxage=120, stale-while-revalidate=300');
+  try {
+    const date = String(req.query.date || new Date().toLocaleDateString('en-CA', {timeZone:'Europe/Rome'}));
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { res.status(400).json({error:'Data non valida'}); return; }
+    const events = await bsd('/events/?date_from=' + date + '&date_to=' + date + '&status=upcoming&limit=200');
+    const shaped = events.map(eventShape);
+    const selected = shaped.filter(e => e.id && e.home && e.away && e.league && selectedLeague(e.league));
+    const fixtures = selected.map(e => ({
+      id:e.id, home:e.home, away:e.away, league:e.league, leagueId:e.leagueId,
+      time:toRomeTime(e.date), date:e.date, homeId:e.homeId, awayId:e.awayId
+    }));
+    if (req.query.mode !== 'auto') { res.status(200).json({date,count:fixtures.length,fixtures}); return; }
+    const uniqueLeagues = [...new Map(selected.map(e => [String(e.leagueId), e])).values()].filter(e => e.leagueId != null);
+    const errors = [];
+    const leadersByLeague = new Map();
+    await Promise.all(uniqueLeagues.map(async e => {
+      try { leadersByLeague.set(String(e.leagueId), await leagueLeaders(e.leagueId)); }
+      catch (err) { errors.push({fixture:e.league, error:err.message}); }
+    }));
+    const players = [];
+    for (const e of selected.slice(0, 30)) {
+      const leaders = leadersByLeague.get(String(e.leagueId)) || [];
+      const teams = [
+        {teamId:e.homeId, teamName:e.home},
+        {teamId:e.awayId, teamName:e.away}
+      ];
+      for (const team of teams) {
+        if (team.teamId == null) continue;
+        const candidates = leaders.filter(p => String(p.teamId) === String(team.teamId));
+        for (const p of candidates) {
+          const scored = scorePlayer(p, {...e, ...team, time:toRomeTime(e.date)});
+          if (scored) players.push(scored);
+        }
+      }
+    }
+    players.sort((a,b) => Math.max(b.goalIndex,b.gaIndex)-Math.max(a.goalIndex,a.gaIndex));
+    const failedCount = errors.length;
+    const message = failedCount
+      ? 'Analisi BSD parziale: non è stato possibile caricare le classifiche di alcune competizioni. I dati non disponibili non sono stati inventati.'
+      : 'Radar BSD caricato. Gli indici sono comparativi, non probabilità reali; la fonte disponibile fornisce classifiche stagionali, non minuti/tiri o titolari ufficiali.';
+    res.status(200).json({
+      date, provider:'BSD', fixtureCount:fixtures.length, analyzedCount:Math.min(selected.length,30),
+      failedCount, errors:errors.slice(0,5), players, fixtures, message
+    });
+  } catch (e) {
+    res.status(e.status || 502).json({error:e.message || 'Errore temporaneo BSD'});
+  }
 };
