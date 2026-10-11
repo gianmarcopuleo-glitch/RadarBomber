@@ -130,9 +130,11 @@ module.exports = async function handler(req, res) {
   try {
     const date = String(req.query.date || new Date().toLocaleDateString('en-CA', {timeZone:'Europe/Rome'}));
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { res.status(400).json({error:'Data non valida'}); return; }
-    const events = await bsd('/events/?date_from=' + date + '&date_to=' + date + '&status=upcoming&limit=200');
+    const events = await bsd('/events/?date_from=' + date + '&date_to=' + date + '&limit=200');
     const shaped = events.map(eventShape);
-    const selected = shaped.filter(e => e.id && e.home && e.away && e.league && selectedLeague(e.league));
+    // BSD football event status values may be `notstarted` rather than the generic `upcoming`.
+    const upcomingStatuses = new Set(['upcoming', 'notstarted', 'not started', 'scheduled', 'ns', 'tbd', 'fixture']);
+    const selected = shaped.filter(e => e.id && e.home && e.away && e.league && selectedLeague(e.league) && upcomingStatuses.has(e.status));
     const fixtures = selected.map(e => ({
       id:e.id, home:e.home, away:e.away, league:e.league, leagueId:e.leagueId,
       time:toRomeTime(e.date), date:e.date, homeId:e.homeId, awayId:e.awayId
@@ -167,7 +169,8 @@ module.exports = async function handler(req, res) {
       ? 'Analisi BSD parziale: non è stato possibile caricare le classifiche di alcune competizioni. I dati non disponibili non sono stati inventati.'
       : 'Radar BSD caricato. Gli indici sono comparativi, non probabilità reali; la fonte disponibile fornisce classifiche stagionali, non minuti/tiri o titolari ufficiali.';
     res.status(200).json({
-      date, provider:'BSD', fixtureCount:fixtures.length, analyzedCount:Math.min(selected.length,30),
+      date, provider:'BSD', providerEventCount:events.length, fixtureCount:fixtures.length, analyzedCount:Math.min(selected.length,30),
+      diagnostics: fixtures.length === 0 ? {sampleLeagues: [...new Set(shaped.slice(0,20).map(e => e.league).filter(Boolean))], sampleStatuses: [...new Set(shaped.map(e => e.status).filter(Boolean))], sampleEvents: shaped.slice(0,3).map(e => ({id:e.id,home:e.home,away:e.away,league:e.league,status:e.status,date:e.date}))} : undefined,
       failedCount, errors:errors.slice(0,5), players, fixtures, message
     });
   } catch (e) {
