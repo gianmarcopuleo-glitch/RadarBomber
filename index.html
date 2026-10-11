@@ -7,7 +7,19 @@
 <header><div class="brand"><div class="logo">R</div><div><h1>RadarBomber</h1><div class="sub">PLAYER RADAR · GOAL & ASSIST</div></div></div><span class="status">● Dashboard pronta</span></header>
 <section class="hero"><div><div class="eyebrow">MATCHDAY INTELLIGENCE</div><h2>Trova il segnale.<br>Valuta con criterio.</h2><p>Due classifiche distinte: probabilità di segnare e probabilità combinata di gol o assist. Confronta le quote inserite e registra gli esiti.</p></div><div class="stats"><div class="stat"><strong id="nPlayers">0</strong><span>Giocatori</span></div><div class="stat"><strong id="nPicks">0</strong><span>Proposte</span></div><div class="stat"><strong id="hitRate">—</strong><span>Hit rate</span></div></div></section>
 <nav class="tabs"><button class="active" data-tab="radar">Radar giocatori</button><button data-tab="odds">Quote</button><button data-tab="results">Storico tip</button><button data-tab="manage">Gestisci dati</button></nav>
-<section id="radar" class="pane"><div class="panel"><div class="head"><div><h3>Classifica giocatori</h3><div class="tiny">Sono mostrati solo profili non demo. Le partite e le statistiche live richiedono ancora una fonte dati collegata.</div></div><select id="sort" style="width:auto"><option value="goal">Ordina: prob. gol</option><option value="ga">Ordina: gol + assist</option><option value="form">Ordina: forma</option></select></div>
+<section id="radar" class="pane">
+<div class="panel" id="liveRadar">
+  <div class="head"><div><h3>Radar live — partite reali</h3><div class="tiny">Statistiche stagionali di gol, assist, minuti, titolarità, tiri e difesa avversaria. Portieri e difensori esclusi; soglia minima 70 mantenuta.</div></div><button class="primary" id="loadFixtures">Aggiorna partite</button></div>
+  <div class="filters" style="grid-template-columns:1fr 2fr auto">
+    <div><label>Data partita</label><input id="liveDate" type="date"></div>
+    <div><label>Partita da analizzare</label><select id="liveFixture"><option value="">Carica prima le partite</option></select></div>
+    <div style="align-self:end"><button id="analyzeFixture">Analizza giocatori</button></div>
+  </div>
+  <div class="tabs"><button class="active" data-live-kind="goal">Indice gol ≥ 70</button><button data-live-kind="ga">Indice gol + assist ≥ 70</button><button data-live-kind="all">Tutti i candidati ≥ 70</button></div>
+  <div id="liveStatus" class="note">Premi “Aggiorna partite” per caricare gli incontri reali della data scelta. Le classifiche vengono calcolate sui dati stagionali del provider: l'indice è comparativo, non una probabilità matematica garantita.</div>
+  <div id="livePlayers" class="players"><div class="empty">Nessuna analisi caricata.</div></div>
+</div>
+<div class="panel"><div class="head"><div><h3>Classifica giocatori</h3><div class="tiny">Sono mostrati solo profili non demo. Le partite e le statistiche live richiedono ancora una fonte dati collegata.</div></div><select id="sort" style="width:auto"><option value="goal">Ordina: prob. gol</option><option value="ga">Ordina: gol + assist</option><option value="form">Ordina: forma</option></select></div>
 <div class="tabs"><button class="active" data-kind="goal">Più probabili marcatore</button><button data-kind="ga">Gol + assist</button><button data-kind="all">Tutti</button></div>
 <div class="filters"><div><label>Cerca giocatore/squadra</label><input id="q" placeholder="Nome, squadra…"></div><div><label>Tipo squadra</label><select id="teamType"><option value="">Club e nazionali</option><option value="club">Club</option><option value="national">Nazionali</option></select></div><div><label>Competizione</label><select id="league"><option value="">Tutte le competizioni</option></select></div><div><label>Ruolo</label><select id="role"><option value="">Tutti</option><option>Attaccante</option><option>Centrocampista</option><option>Difensore</option></select></div><div><label>Prob. minima</label><select id="min"><option value="0">Tutte</option><option value="40">40%+</option><option value="55">55%+</option><option value="70">70%+</option></select></div></div><div id="players" class="players"></div>
 <div class="note"><b>Copertura prevista:</b> campionati nazionali e coppe nazionali; Champions League, Europa League, Conference League; Nations League, qualificazioni Europei e Mondiali, Europei e Mondiali; Copa Libertadores. La copertura dell’interfaccia non equivale ancora a un archivio automatico di tutti i giocatori: serve collegare un provider dati.</div><div class="note"><b>Nota:</b> in questa versione le probabilità e le quote sono manuali. Non è ancora collegato un feed live che importi automaticamente calendari, rose, statistiche e quote.</div></div></section>
@@ -76,5 +88,41 @@ document.getElementById('importCsv').onchange=async e=>{let file=e.target.files[
 document.getElementById('importJson').onchange=async e=>{let file=e.target.files[0];if(!file)return;try{let data=JSON.parse(await file.text());if(!Array.isArray(data.players))throw Error('Nel JSON manca l’array players');if(!confirm('Sostituire archivio attuale con il backup?'))return;s={players:data.players,odds:Array.isArray(data.odds)?data.odds:[],picks:Array.isArray(data.picks)?data.picks:[]};save();alert('Backup ripristinato.')}catch(err){alert('Backup non importato: '+err.message)}e.target.value=''};
 
 document.getElementById('csv').onclick=()=>{let rows=[['Data','Giocatore','Squadra','Mercato','Probabilità','Quota','Esito'],...s.picks.map(p=>[p.date,p.name,p.team,p.market,p.prob,p.odd??'',p.result])],csv=rows.map(r=>r.map(x=>'"'+String(x).replace(/"/g,'""')+'"').join(';')).join('\n'),a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}));a.download='radarbomber-risultati.csv';a.click();URL.revokeObjectURL(a.href)};
+
+const liveState={fixtures:[],players:[],kind:'goal'};
+const liveDate=document.getElementById('liveDate');
+liveDate.value=new Date().getFullYear()+'-'+String(new Date().getMonth()+1).padStart(2,'0')+'-'+String(new Date().getDate()).padStart(2,'0');
+document.querySelectorAll('[data-live-kind]').forEach(b=>b.onclick=()=>{liveState.kind=b.dataset.liveKind;document.querySelectorAll('[data-live-kind]').forEach(x=>x.classList.toggle('active',x===b));renderLivePlayers()});
+document.getElementById('loadFixtures').onclick=async()=>{
+ const status=document.getElementById('liveStatus'),sel=document.getElementById('liveFixture');
+ status.textContent='Caricamento delle partite reali…';document.getElementById('livePlayers').innerHTML='<div class="empty">Attendere…</div>';
+ try{
+  const r=await fetch('/api/radar?date='+encodeURIComponent(liveDate.value));const data=await r.json();
+  if(!r.ok)throw new Error(data.error||'Errore nel caricamento');
+  liveState.fixtures=data.fixtures||[];
+  sel.innerHTML='<option value="">Seleziona una partita ('+liveState.fixtures.length+')</option>'+liveState.fixtures.map(f=>'<option value="'+f.id+'">'+esc(f.time)+' · '+esc(f.league)+' · '+esc(f.home)+' - '+esc(f.away)+'</option>').join('');
+  status.textContent=liveState.fixtures.length?'Trovate '+liveState.fixtures.length+' partite delle competizioni selezionate. Scegli un incontro e premi “Analizza giocatori”.':'Nessuna partita trovata per questa data nelle competizioni configurate. Prova un’altra data o verifica la copertura del piano API.';
+  document.getElementById('livePlayers').innerHTML='<div class="empty">'+(liveState.fixtures.length?'Scegli una partita da analizzare.':'Nessuna partita disponibile.')+'</div>';
+ }catch(e){status.textContent='Errore: '+e.message;document.getElementById('livePlayers').innerHTML='<div class="empty">Impossibile caricare le partite. Controlla la chiave API_FOOTBALL_KEY e il deployment Vercel.</div>'}
+};
+document.getElementById('analyzeFixture').onclick=async()=>{
+ const id=document.getElementById('liveFixture').value,status=document.getElementById('liveStatus');
+ if(!id){status.textContent='Seleziona prima una partita.';return}
+ status.textContent='Analisi delle statistiche stagionali, dei titolari e degli indisponibili…';
+ document.getElementById('livePlayers').innerHTML='<div class="empty">Analisi in corso…</div>';
+ try{
+  const r=await fetch('/api/radar?fixture='+encodeURIComponent(id)+'&date='+encodeURIComponent(liveDate.value));const data=await r.json();
+  if(!r.ok)throw new Error(data.error||'Errore nel caricamento dei giocatori');
+  liveState.players=data.players||[];
+  status.textContent=(data.fixture?data.fixture.home+' - '+data.fixture.away+'. ':'')+data.message+' Soglia minima: 70/100.';
+  renderLivePlayers();
+ }catch(e){status.textContent='Errore: '+e.message;document.getElementById('livePlayers').innerHTML='<div class="empty">Nessun dato disponibile. Verifica chiave API, quota residua del provider e deployment.</div>'}
+};
+function renderLivePlayers(){
+ const kind=liveState.kind,threshold=70;
+ let list=liveState.players.filter(p=>kind==='goal'?p.goalIndex>=threshold:kind==='ga'?p.gaIndex>=threshold:Math.max(p.goalIndex,p.gaIndex)>=threshold);
+ list.sort((a,b)=>kind==='goal'?b.goalIndex-a.goalIndex:kind==='ga'?b.gaIndex-a.gaIndex:Math.max(b.goalIndex,b.gaIndex)-Math.max(a.goalIndex,a.gaIndex));
+ document.getElementById('livePlayers').innerHTML=list.length?list.map(p=>'<article class="player"><div><div class="name">'+esc(p.name)+'</div><div class="team">'+esc(p.team)+' · '+esc(p.position||'Ruolo non specificato')+'</div><div class="tiny">'+p.goals+' gol, '+p.assists+' assist in '+p.appearances+' presenze · '+p.goalsPer90+' gol/90’ · '+p.assistsPer90+' assist/90’ · media '+p.avgMinutes+' min · titolarità '+p.startRate+'%</div><div class="tiny">Tiri: '+p.shots+' ('+p.shotsOnTarget+' in porta) · gol squadra: '+p.teamGoals+' · gol subiti avversaria: '+p.opponentConceded+'</div></div><div><div class="tiny">Indice gol</div><div class="metric"><div class="bar"><i style="width:'+p.goalIndex+'%"></i></div><span class="score">'+p.goalIndex+'/100</span></div></div><div><div class="tiny">Indice gol + assist</div><div class="metric"><div class="bar cyan"><i style="width:'+p.gaIndex+'%"></i></div><span class="score">'+p.gaIndex+'/100</span></div></div><div class="last"><span class="pill">'+(p.lineupKnown?'TITOLARE UFFICIALE':p.startRate>=65?'PROBABILE TITOLARE':'CANDIDATO')+'</span></div></article>').join(''):'<div class="empty">Nessun giocatore raggiunge la soglia di 70 per questo mercato. Prova l’altra classifica oppure analizza un’altra partita. La soglia non viene abbassata automaticamente.</div>';
+}
 render();
 </script></body></html>
