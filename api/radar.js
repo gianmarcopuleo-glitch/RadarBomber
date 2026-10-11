@@ -11,7 +11,15 @@ const allowed = [
   ['ligue 1', ['ligue 1']],
   ['coupe de france', ['coupe de france']],
   ['serie a', ['serie a']],
+  ['serie b', ['serie b', 'serie bkt']],
   ['coppa italia', ['coppa italia']],
+  ['primeira liga', ['primeira liga', 'liga portugal']],
+  ['eredivisie', ['eredivisie']],
+  ['mls', ['mls', 'major league soccer']],
+  ['saudi pro league', ['saudi pro league', 'saudi league']],
+  ['brasileirao', ['brasileirao', 'brasileiro serie a']],
+  ['liga profesional argentina', ['liga profesional', 'primera lpf']],
+  ['copa sudamericana', ['copa sudamericana']],
   ['champions league', ['champions league']],
   ['europa league', ['europa league']],
   ['conference league', ['conference league']],
@@ -49,18 +57,19 @@ function pick(obj, ...keys) { for (const k of keys) if (obj && obj[k] != null) r
 function eventShape(e) {
   const homeObj = e.home_team || e.homeTeam || {};
   const awayObj = e.away_team || e.awayTeam || {};
-  const leagueObj = e.league || e.competition || {};
-  const date = pick(e, 'event_date', 'date', 'kickoff', 'start_time');
+  const leagueObj = e.league || e.competition || e.tournament || e.competition_info || {};
+  const tournamentObj = e.tournament || {};
+  const date = pick(e, 'event_date', 'date', 'kickoff', 'start_time', 'match_date', 'event_time');
   return {
-    id: pick(e, 'id', 'event_id'),
+    id: pick(e, 'id', 'event_id', 'match_id'),
     date,
-    status: norm(pick(e, 'status', 'status_name') || 'upcoming'),
-    homeId: pick(e, 'home_team_id') ?? pick(homeObj, 'id', 'team_id'),
-    awayId: pick(e, 'away_team_id') ?? pick(awayObj, 'id', 'team_id'),
-    home: pick(e, 'home_team_name', 'home', 'home_name') ?? pick(homeObj, 'name', 'team_name') ?? (typeof e.home_team === 'string' ? e.home_team : null),
-    away: pick(e, 'away_team_name', 'away', 'away_name') ?? pick(awayObj, 'name', 'team_name') ?? (typeof e.away_team === 'string' ? e.away_team : null),
-    leagueId: pick(e, 'league_id', 'competition_id') ?? pick(leagueObj, 'id', 'league_id'),
-    league: pick(e, 'league_name', 'competition_name') ?? pick(leagueObj, 'name', 'league_name') ?? (typeof e.league === 'string' ? e.league : null)
+    status: norm(pick(e, 'status', 'status_name', 'event_status') || 'upcoming'),
+    homeId: pick(e, 'home_team_id', 'home_id') ?? pick(homeObj, 'id', 'team_id'),
+    awayId: pick(e, 'away_team_id', 'away_id') ?? pick(awayObj, 'id', 'team_id'),
+    home: pick(e, 'home_team_name', 'home', 'home_name', 'homeTeamName', 'localteam_name') ?? pick(homeObj, 'name', 'team_name', 'title') ?? (typeof e.home_team === 'string' ? e.home_team : null),
+    away: pick(e, 'away_team_name', 'away', 'away_name', 'awayTeamName', 'visitorteam_name') ?? pick(awayObj, 'name', 'team_name', 'title') ?? (typeof e.away_team === 'string' ? e.away_team : null),
+    leagueId: pick(e, 'league_id', 'competition_id', 'tournament_id', 'leagueId') ?? pick(leagueObj, 'id', 'league_id', 'competition_id') ?? pick(tournamentObj, 'id'),
+    league: pick(e, 'league_name', 'competition_name', 'tournament_name', 'league_title', 'competition_title') ?? pick(leagueObj, 'name', 'league_name', 'title', 'short_name') ?? pick(tournamentObj, 'name', 'title') ?? (typeof e.league === 'string' ? e.league : null) ?? (typeof e.competition === 'string' ? e.competition : null) ?? (typeof e.tournament === 'string' ? e.tournament : null)
   };
 }
 function toRomeTime(date) {
@@ -147,7 +156,18 @@ module.exports = async function handler(req, res) {
       events = fallbackRows.filter(e => romeDate(pick(e, 'event_date', 'date', 'kickoff', 'start_time', 'match_date')) === date);
       fallbackUsed = true;
     }
-    const shaped = events.map(eventShape);
+    let shaped = events.map(eventShape);
+    // Some provider responses include league_id but omit the embedded league name.
+    // Resolve those IDs against the official league catalogue before filtering competitions.
+    if (shaped.some(e => !e.league && e.leagueId != null)) {
+      try {
+        const leagueRows = await bsd('/leagues/?limit=200');
+        const leagueNames = new Map(leagueRows.map(l => [String(l.id), l.name || l.league_name || l.title || '']));
+        shaped = shaped.map(e => ({...e, league: e.league || leagueNames.get(String(e.leagueId)) || null}));
+      } catch (_) {
+        // Keep the diagnostic output below useful even if the optional catalogue call fails.
+      }
+    }
     // BSD football event status values may be `notstarted` rather than the generic `upcoming`.
     const upcomingStatuses = new Set(['upcoming', 'notstarted', 'not started', 'scheduled', 'ns', 'tbd', 'fixture']);
     const selected = shaped.filter(e => e.id && e.home && e.away && e.league && selectedLeague(e.league) && upcomingStatuses.has(e.status));
@@ -172,7 +192,10 @@ module.exports = async function handler(req, res) {
       ];
       for (const team of teams) {
         if (team.teamId == null) continue;
-        const candidates = leaders.filter(p => String(p.teamId) === String(team.teamId));
+        const candidates = leaders.filter(p =>
+          (team.teamId != null && p.teamId != null && String(p.teamId) === String(team.teamId)) ||
+          (!p.teamId && p.team && norm(p.team) === norm(team.teamName))
+        );
         for (const p of candidates) {
           const scored = scorePlayer(p, {...e, ...team, time:toRomeTime(e.date)});
           if (scored) players.push(scored);
@@ -186,7 +209,7 @@ module.exports = async function handler(req, res) {
       : 'Radar BSD caricato. Gli indici sono comparativi, non probabilità reali; la fonte disponibile fornisce classifiche stagionali, non minuti/tiri o titolari ufficiali.';
     res.status(200).json({
       date, provider:'BSD', providerEventCount:events.length, fixtureCount:fixtures.length, analyzedCount:Math.min(selected.length,30),
-      diagnostics: fixtures.length === 0 ? {fallbackUsed, rawEventKeys: events[0] ? Object.keys(events[0]).slice(0,40) : [], sampleLeagues: [...new Set(shaped.slice(0,20).map(e => e.league).filter(Boolean))], sampleStatuses: [...new Set(shaped.map(e => e.status).filter(Boolean))], sampleEvents: shaped.slice(0,3).map(e => ({id:e.id,home:e.home,away:e.away,league:e.league,status:e.status,date:e.date}))} : undefined,
+      diagnostics: fixtures.length === 0 || players.length === 0 ? {fallbackUsed, rawEventKeys: events[0] ? Object.keys(events[0]).slice(0,50) : [], sampleLeagues: [...new Set(shaped.slice(0,30).map(e => e.league).filter(Boolean))], sampleStatuses: [...new Set(shaped.map(e => e.status).filter(Boolean))], sampleEvents: shaped.slice(0,3).map(e => ({id:e.id,home:e.home,away:e.away,leagueId:e.leagueId,league:e.league,status:e.status,date:e.date})), leaguesSelected: uniqueLeagues.length, leaderboardsLoaded: leadersByLeague.size} : undefined,
       failedCount, errors:errors.slice(0,5), players, fixtures, message
     });
   } catch (e) {
