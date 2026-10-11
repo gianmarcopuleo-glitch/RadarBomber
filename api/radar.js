@@ -15,6 +15,7 @@ const api = async path => {
   return j.response || [];
 };
 const n = v => Number(v || 0);
+const safeApi = async (path, fallback) => { try { return await api(path); } catch (_) { return fallback; } };
 const clamp = (v,a,b) => Math.max(a,Math.min(b,v));
 function rank(row, oppConceded, teamScored) {
   const p=row.player||{}, s=(row.statistics||[])[0]||{}, g=s.goals||{}, games=s.games||{}, shots=s.shots||{}, pen=s.penalty||{};
@@ -52,14 +53,14 @@ module.exports = async function handler(req,res) {
     if(!f){res.status(404).json({error:'Partita non trovata'});return;}
     const season=Number(f.league?.season||String(f.fixture.date).slice(0,4));
     const [lineups,injuries,homeStats,awayStats,homeTeamStats,awayTeamStats]=await Promise.all([
-      api('/fixtures/lineups?fixture='+fixtureId),
-      api('/injuries?fixture='+fixtureId),
+      safeApi('/fixtures/lineups?fixture='+fixtureId, []),
+      safeApi('/injuries?fixture='+fixtureId, []),
       api('/players?team='+f.teams.home.id+'&season='+season+'&league='+f.league.id+'&page=1'),
       api('/players?team='+f.teams.away.id+'&season='+season+'&league='+f.league.id+'&page=1'),
-      api('/teams/statistics?league='+f.league.id+'&season='+season+'&team='+f.teams.home.id),
-      api('/teams/statistics?league='+f.league.id+'&season='+season+'&team='+f.teams.away.id)
+      safeApi('/teams/statistics?league='+f.league.id+'&season='+season+'&team='+f.teams.home.id, {}),
+      safeApi('/teams/statistics?league='+f.league.id+'&season='+season+'&team='+f.teams.away.id, {})
     ]);
-    const lineupKnown=lineups.length>0;
+    const lineupKnown=lineups.length>=2 && lineups.every(t=>Array.isArray(t.startXI)&&t.startXI.length>0);
     const starters=new Set(lineups.flatMap(t=>(t.startXI||[]).map(x=>String(x.player?.id))));
     const injured=new Set(injuries.map(x=>String(x.player?.id)));
     const homeScored=n(homeTeamStats.goals?.for?.total?.total), awayScored=n(awayTeamStats.goals?.for?.total?.total);
