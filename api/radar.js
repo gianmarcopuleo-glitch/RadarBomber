@@ -85,6 +85,6 @@ module.exports=async function handler(req,res){
   const analyzed=await pool(batch,3,analyzeFixture);
   const players=analyzed.flatMap(x=>x?.players||[]);
   players.sort((a,b)=>Math.max(b.goalIndex,b.gaIndex)-Math.max(a.goalIndex,a.gaIndex));
-  res.status(200).json({date,fixtureCount:selected.length,analyzedCount:batch.length,failedCount:analyzed.filter(x=>x?.error).length,players,fixtures:brief,message:'Analisi automatica completata per tutte le partite selezionate (fino a 30), con classifica gol e gol+assist. Formazioni ufficiali applicate quando disponibili; altrimenti filtro su minuti e titolarità stagionale.'});
+  res.status(200).json({date,fixtureCount:selected.length,analyzedCount:batch.length,failedCount:analyzed.filter(x=>x?.error).length,errors:analyzed.filter(x=>x?.error).slice(0,5).map(x=>({fixture:x.fixture?.home+' - '+x.fixture?.away,error:x.error})),players,fixtures:brief,message:'Analisi automatica completata per tutte le partite selezionate (fino a 30), con classifica gol e gol+assist. Formazioni ufficiali applicate quando disponibili; altrimenti filtro su minuti e titolarità stagionale.'});
  }catch(e){res.status(e.status||502).json({error:e.status===503?'Manca API_FOOTBALL_KEY nelle Environment Variables di Vercel.':e.message||'Errore temporaneo del provider'});}
 };
