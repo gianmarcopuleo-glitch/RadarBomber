@@ -130,7 +130,23 @@ module.exports = async function handler(req, res) {
   try {
     const date = String(req.query.date || new Date().toLocaleDateString('en-CA', {timeZone:'Europe/Rome'}));
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { res.status(400).json({error:'Data non valida'}); return; }
-    const events = await bsd('/events/?date_from=' + date + '&date_to=' + date + '&limit=200');
+    let events = await bsd('/events/?date_from=' + date + '&date_to=' + date + '&limit=200');
+    let fallbackUsed = false;
+    // Fallback: if the provider's date-filtered endpoint returns no rows, retrieve upcoming
+    // events and filter by the requested calendar date in Rome locally.
+    if (events.length === 0) {
+      const fallbackRows = await bsd('/events/?status=upcoming&limit=200');
+      const romeDate = value => {
+        if (!value) return '';
+        const d = new Date(value);
+        if (Number.isNaN(d.getTime())) return String(value).slice(0, 10);
+        const parts = new Intl.DateTimeFormat('en-CA', {timeZone:'Europe/Rome',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(d);
+        const part = k => parts.find(p => p.type === k)?.value || '';
+        return part('year') + '-' + part('month') + '-' + part('day');
+      };
+      events = fallbackRows.filter(e => romeDate(pick(e, 'event_date', 'date', 'kickoff', 'start_time', 'match_date')) === date);
+      fallbackUsed = true;
+    }
     const shaped = events.map(eventShape);
     // BSD football event status values may be `notstarted` rather than the generic `upcoming`.
     const upcomingStatuses = new Set(['upcoming', 'notstarted', 'not started', 'scheduled', 'ns', 'tbd', 'fixture']);
@@ -170,7 +186,7 @@ module.exports = async function handler(req, res) {
       : 'Radar BSD caricato. Gli indici sono comparativi, non probabilità reali; la fonte disponibile fornisce classifiche stagionali, non minuti/tiri o titolari ufficiali.';
     res.status(200).json({
       date, provider:'BSD', providerEventCount:events.length, fixtureCount:fixtures.length, analyzedCount:Math.min(selected.length,30),
-      diagnostics: fixtures.length === 0 ? {sampleLeagues: [...new Set(shaped.slice(0,20).map(e => e.league).filter(Boolean))], sampleStatuses: [...new Set(shaped.map(e => e.status).filter(Boolean))], sampleEvents: shaped.slice(0,3).map(e => ({id:e.id,home:e.home,away:e.away,league:e.league,status:e.status,date:e.date}))} : undefined,
+      diagnostics: fixtures.length === 0 ? {fallbackUsed, rawEventKeys: events[0] ? Object.keys(events[0]).slice(0,40) : [], sampleLeagues: [...new Set(shaped.slice(0,20).map(e => e.league).filter(Boolean))], sampleStatuses: [...new Set(shaped.map(e => e.status).filter(Boolean))], sampleEvents: shaped.slice(0,3).map(e => ({id:e.id,home:e.home,away:e.away,league:e.league,status:e.status,date:e.date}))} : undefined,
       failedCount, errors:errors.slice(0,5), players, fixtures, message
     });
   } catch (e) {
