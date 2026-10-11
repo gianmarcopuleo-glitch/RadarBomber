@@ -68,7 +68,7 @@ function eventShape(e) {
     awayId: pick(e, 'away_team_id', 'away_id') ?? pick(awayObj, 'id', 'team_id'),
     home: pick(e, 'home_team_name', 'home', 'home_name', 'homeTeamName', 'localteam_name') ?? pick(homeObj, 'name', 'team_name', 'title') ?? (typeof e.home_team === 'string' ? e.home_team : null),
     away: pick(e, 'away_team_name', 'away', 'away_name', 'awayTeamName', 'visitorteam_name') ?? pick(awayObj, 'name', 'team_name', 'title') ?? (typeof e.away_team === 'string' ? e.away_team : null),
-    leagueId: pick(e, 'league_id', 'competition_id', 'tournament_id', 'leagueId') ?? pick(leagueObj, 'id', 'league_id', 'competition_id') ?? pick(tournamentObj, 'id'),
+    leagueId: pick(e, 'league_id', 'competition_id', 'tournament_id', 'leagueId') ?? pick(leagueObj, 'id', 'league_id', 'competition_id') ?? pick(tournamentObj, 'id') ?? (typeof e.league === 'number' ? e.league : null) ?? (typeof e.competition === 'number' ? e.competition : null),
     league: pick(e, 'league_name', 'competition_name', 'tournament_name', 'league_title', 'competition_title') ?? pick(leagueObj, 'name', 'league_name', 'title', 'short_name') ?? pick(tournamentObj, 'name', 'title') ?? (typeof e.league === 'string' ? e.league : null) ?? (typeof e.competition === 'string' ? e.competition : null) ?? (typeof e.tournament === 'string' ? e.tournament : null)
   };
 }
