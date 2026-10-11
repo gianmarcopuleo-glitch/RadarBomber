@@ -108,9 +108,9 @@ function comparativeIndices(items){
  }
  return rows;
 }
-function relevantForMarket(p,market){const role=String(p.position||'').toLowerCase();if(role.includes('portiere')||role.includes('goalkeeper'))return false;const goals=Number(p.goals)||0,assists=Number(p.assists)||0;if(role.includes('difensor'))return market==='goal'?goals>0:goals+assists>0;return true;}
-function qualifiesGoal(p){return relevantForMarket(p,'goal')&&Number(p.goalIndex)>=70&&Number(p.goalProbability)>=18;}
-function qualifiesGA(p){return relevantForMarket(p,'ga')&&Number(p.gaIndex)>=70&&Number(p.gaProbability)>=28;}
+function relevantForMarket(p,market){const role=String(p.position||'').toLowerCase();if(role.includes('portiere')||role.includes('goalkeeper')||role.includes('difensor')||role.includes('defender'))return false;return true;}
+function qualifiesGoal(p){return relevantForMarket(p,'goal')&&(Number(p.goals)||0)>=2&&Number(p.goalIndex)>=70&&Number(p.goalProbability)>=18;}
+function qualifiesGA(p){return relevantForMarket(p,'ga')&&((Number(p.goals)||0)+(Number(p.assists)||0))>=2&&Number(p.gaIndex)>=70&&Number(p.gaProbability)>=28;}
 function qualifiesAny(p){return qualifiesGoal(p)||qualifiesGA(p);}
 async function scanFixturesForPlayers(fixtures){
  const status=document.getElementById('liveStatus'),out=document.getElementById('liveMatches');
