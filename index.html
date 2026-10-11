@@ -100,7 +100,7 @@ async function loadAutomaticRadar(){
   const r=await fetch('/api/radar?mode=auto&date='+encodeURIComponent(liveDate.value));const data=await r.json();
   if(!r.ok)throw new Error(data.error||'Errore nel caricamento');
   liveState.players=data.players||[];
-  status.textContent=(data.message||'Analisi completata.')+' Partite trovate: '+data.fixtureCount+'; analizzate: '+data.analyzedCount+'; errori su singole partite: '+data.failedCount+'.';
+  status.textContent=(data.message||'Analisi completata.')+' Partite trovate: '+data.fixtureCount+'; analizzate: '+data.analyzedCount+'; errori su singole partite: '+data.failedCount+'.'+((data.errors||[]).length?' Dettagli: '+data.errors.map(x=>x.fixture+': '+x.error).join(' | '):'');
   renderLivePlayers();
  }catch(e){status.textContent='Errore: '+e.message;out.innerHTML='<div class="empty">Il radar non ha potuto completare l’analisi. Controllare API_FOOTBALL_KEY, quota API e deployment Vercel.</div>'}
 }
